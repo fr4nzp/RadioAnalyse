@@ -4,6 +4,8 @@ import json
 import pandas as pd
 import os
 import re
+import pydeck as pdk
+import altair as alt
 
 st.set_page_config(page_title="Radio Trace Analyzer", layout="wide")
 st.title("📡 Radio Trace Analyzer")
@@ -68,19 +70,90 @@ if uploaded_file:
     raw_data = json.load(uploaded_file)
     st.success(f"Datei geladen: {len(raw_data)} Einträge gefunden.")
 
-    mode = st.radio("Wähle Radiomodus", ["DAB", "FM"])
+    mode = st.radio("Wähle Radiomodus", ["DAB", "FM"], key="mode_selection")
 
-    if st.button("🔍 Analyse starten"):
-        if mode == "DAB":
-            df = extract_dab(raw_data)
-            st.subheader("📈 DAB-Daten")
-            st.dataframe(df)
-        elif mode == "FM":
-            df = extract_fm(raw_data)
-            st.subheader("📈 FM-Daten")
+    df = None
+    if mode == "DAB":
+        df = extract_dab(raw_data)
+    elif mode == "FM":
+        df = extract_fm(raw_data)
+
+    if df is not None and not df.empty:
+        df["timeStamp"] = pd.to_datetime(df["timeStamp"])
+
+        st.subheader("📊 Diagramm der Radiodaten")
+
+        column_options = [col for col in df.columns if col not in ["timeStamp"]]
+        selected_column = st.selectbox("Welchen Wert möchtest du anzeigen?", column_options)
+
+        resample_interval = st.selectbox("Wähle Zeitintervall (für Mittelwert)", ["Original", "1S", "5S", "10S", "30S", "60S"])
+        show_average = st.checkbox("Durchschnittslinie anzeigen")
+        show_trend = st.checkbox("Tendenzlinie anzeigen")
+
+        chart_df = df.set_index("timeStamp")[[selected_column]].copy()
+
+        if resample_interval != "Original":
+            chart_df = chart_df.resample(resample_interval).mean().dropna()
+
+        chart_df.reset_index(inplace=True)
+        base = alt.Chart(chart_df).mark_circle(size=30).encode(
+            x="timeStamp:T",
+            y=alt.Y(selected_column, title=selected_column),
+            tooltip=["timeStamp:T", selected_column]
+        )
+
+        layers = [base]
+
+        if show_average:
+            mean_value = chart_df[selected_column].mean()
+            mean_line = alt.Chart(pd.DataFrame({"y": [mean_value]})).mark_rule(color="green").encode(y="y")
+            layers.append(mean_line)
+
+        if show_trend:
+            trend_line = base.transform_loess("timeStamp", selected_column, bandwidth=0.3).mark_line(color="orange")
+            layers.append(trend_line)
+
+        st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
+
+        with st.expander("📋 Zeige Radiodaten als Tabelle"):
             st.dataframe(df)
 
-        gnss_df = extract_gnss(raw_data)
-        st.subheader("📍 GNSS-Daten")
+    gnss_df = extract_gnss(raw_data)
+    gnss_df["timeStamp"] = pd.to_datetime(gnss_df["timeStamp"])
+    st.subheader("📍 GNSS-Daten auf Karte")
+
+    style = st.selectbox("🗺️ Wähle Kartenstil", [
+        "streets", "light", "dark", "satellite", "satellite-streets", "outdoors"
+    ])
+    style_dict = {
+        "streets": "mapbox://styles/mapbox/streets-v11",
+        "light": "mapbox://styles/mapbox/light-v10",
+        "dark": "mapbox://styles/mapbox/dark-v10",
+        "satellite": "mapbox://styles/mapbox/satellite-v9",
+        "satellite-streets": "mapbox://styles/mapbox/satellite-streets-v11",
+        "outdoors": "mapbox://styles/mapbox/outdoors-v11"
+    }
+    map_style = style_dict[style]
+
+    if not gnss_df.empty:
+        mid_lat = gnss_df["lat"].mean()
+        mid_lon = gnss_df["lon"].mean()
+
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=gnss_df,
+            get_position="[lon, lat]",
+            get_radius=5,
+            get_fill_color=[255, 0, 0],
+            pickable=True
+        )
+        view_state = pdk.ViewState(
+            latitude=mid_lat,
+            longitude=mid_lon,
+            zoom=15,
+            pitch=0
+        )
+        st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, map_style=map_style))
+
+    with st.expander("📋 Zeige GNSS-Daten als Tabelle"):
         st.dataframe(gnss_df)
-        st.map(gnss_df.rename(columns={"lat": "latitude", "lon": "longitude"}))
