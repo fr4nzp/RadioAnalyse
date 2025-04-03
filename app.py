@@ -86,7 +86,7 @@ if uploaded_file:
         column_options = [col for col in df.columns if col not in ["timeStamp"]]
         selected_column = st.selectbox("Welchen Wert möchtest du anzeigen?", column_options)
 
-        resample_interval = st.selectbox("Wähle Zeitintervall (für Mittelwert)", ["Original", "1S", "5S", "10S", "30S", "60S"])
+        resample_interval = st.selectbox("Wähle Zeitintervall (für Mittelwert)", ["Original", "1s", "5s", "10s", "30s", "60s"])
         show_average = st.checkbox("Durchschnittslinie anzeigen")
         show_trend = st.checkbox("Tendenzlinie anzeigen")
 
@@ -96,13 +96,44 @@ if uploaded_file:
             chart_df = chart_df.resample(resample_interval).mean().dropna()
 
         chart_df.reset_index(inplace=True)
+
         base = alt.Chart(chart_df).mark_circle(size=30).encode(
             x="timeStamp:T",
             y=alt.Y(selected_column, title=selected_column),
             tooltip=["timeStamp:T", selected_column]
         )
 
-        layers = [base]
+        layers = []
+
+        # Benchmark-Bänder für DAB
+        if mode == "DAB":
+            if selected_column == "RSSI":
+                bands = pd.DataFrame([
+                    {"name": "Gut", "y0": -80, "y1": 0, "color": "#d0f0c0"},
+                    {"name": "Mittel", "y0": -95, "y1": -80, "color": "#fff2cc"},
+                    {"name": "Schlecht", "y0": -120, "y1": -95, "color": "#f4cccc"},
+                ])
+            elif selected_column == "SNR":
+                bands = pd.DataFrame([
+                    {"name": "Gut", "y0": 15, "y1": 50, "color": "#d0f0c0"},
+                    {"name": "Mittel", "y0": 8, "y1": 15, "color": "#fff2cc"},
+                    {"name": "Schlecht", "y0": 0, "y1": 8, "color": "#f4cccc"},
+                ])
+            else:
+                bands = pd.DataFrame([])
+
+            for _, row in bands.iterrows():
+                band = alt.Chart(chart_df).mark_rect(opacity=0.2, fill=row.color).encode(
+                    x="timeStamp:T",
+                    y=alt.Y("y0:Q", scale=alt.Scale(domain=[bands["y0"].min(), bands["y1"].max()])),
+                    y2="y1:Q"
+                ).transform_calculate(
+                    y0=f"{row['y0']}",
+                    y1=f"{row['y1']}"
+                )
+                layers.append(band)
+
+        layers.append(base)
 
         if show_average:
             mean_value = chart_df[selected_column].mean()
