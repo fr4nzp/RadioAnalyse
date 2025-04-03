@@ -6,6 +6,7 @@ import os
 import re
 import pydeck as pdk
 import altair as alt
+from datetime import timedelta
 
 st.set_page_config(page_title="Radio Trace Analyzer", layout="wide")
 st.title("📡 Radio Trace Analyzer")
@@ -62,6 +63,26 @@ def extract_gnss(data):
                     "antenna": int(antenna)
                 })
     return pd.DataFrame(extracted)
+
+def evaluate_signal_quality(gnss_df, radio_df):
+    scores = []
+    radio_df = radio_df.copy()
+    radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
+    for _, row in gnss_df.iterrows():
+        t = row["timeStamp"]
+        time_window = radio_df[(radio_df["timeStamp"] >= t - timedelta(seconds=1)) & (radio_df["timeStamp"] <= t + timedelta(seconds=1))]
+        if not time_window.empty:
+            snr = time_window["SNR"].mean()
+            rssi = time_window["RSSI"].mean()
+            snr_score = min(snr / 20, 1) * 100 if pd.notnull(snr) else 0
+            rssi_score = min(max((rssi + 100) / 20, 0), 1) * 100 if pd.notnull(rssi) else 0
+            score = round(0.5 * snr_score + 0.5 * rssi_score, 1)
+        else:
+            score = None
+        scores.append(score)
+    gnss_df = gnss_df.copy()
+    gnss_df["signal_score"] = scores
+    return gnss_df
 
 # Streamlit UI
 uploaded_file = st.file_uploader("Lade eine JSON-Datei mit Trace-Daten hoch", type="json")
@@ -166,18 +187,34 @@ if uploaded_file:
     }
     map_style = style_dict[style]
 
+    map_mode = st.radio("Kartenmodus", ["Standardpunkte", "Signalqualität bewerten"])
+
     if not gnss_df.empty:
         mid_lat = gnss_df["lat"].mean()
         mid_lon = gnss_df["lon"].mean()
 
-        layer = pdk.Layer(
-            "ScatterplotLayer",
-            data=gnss_df,
-            get_position="[lon, lat]",
-            get_radius=5,
-            get_fill_color=[255, 0, 0],
-            pickable=True
-        )
+        if map_mode == "Signalqualität bewerten" and mode == "DAB":
+            scored_df = evaluate_signal_quality(gnss_df, df)
+            scored_df = scored_df.dropna(subset=["signal_score"])
+            scored_df["color"] = scored_df["signal_score"].apply(lambda x: [255 - int(x * 2.55), int(x * 2.55), 0])
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=scored_df,
+                get_position="[lon, lat]",
+                get_radius=6,
+                get_fill_color="color",
+                pickable=True
+            )
+        else:
+            layer = pdk.Layer(
+                "ScatterplotLayer",
+                data=gnss_df,
+                get_position="[lon, lat]",
+                get_radius=5,
+                get_fill_color=[255, 0, 0],
+                pickable=True
+            )
+
         view_state = pdk.ViewState(
             latitude=mid_lat,
             longitude=mid_lon,
