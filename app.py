@@ -35,16 +35,53 @@ def evaluate_signal_quality(gnss_df, radio_df):
     gnss_df["signal_score"] = scores
     return gnss_df
 
-# Farbverlauf von rot (schlecht) über gelb zu grün (gut)
-def score_to_color(score):
-    if score is None:
-        return [128, 128, 128]  # grau bei fehlendem Score
-    elif score < 33:
-        return [255, 50, 50]  # rot
-    elif score < 66:
+def evaluate_single_metric(gnss_df, radio_df, column):
+    values = []
+    radio_df = radio_df.copy()
+    radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
+    for _, row in gnss_df.iterrows():
+        t = row["timeStamp"]
+        time_window = radio_df[(radio_df["timeStamp"] >= t - timedelta(seconds=1)) & (radio_df["timeStamp"] <= t + timedelta(seconds=1))]
+        if not time_window.empty:
+            val = time_window[column].mean()
+        else:
+            val = None
+        values.append(val)
+    gnss_df = gnss_df.copy()
+    gnss_df[column] = values
+    return gnss_df
+
+# Farbskalen nach Benchmarks
+
+def rssi_to_color(rssi):
+    if rssi is None:
+        return [128, 128, 128]
+    elif rssi >= -80:
+        return [0, 180, 0]  # grün
+    elif rssi >= -95:
         return [255, 200, 0]  # gelb
     else:
-        return [0, 180, 0]  # grün
+        return [255, 50, 50]  # rot
+
+def snr_to_color(snr):
+    if snr is None:
+        return [128, 128, 128]
+    elif snr >= 15:
+        return [0, 180, 0]
+    elif snr >= 8:
+        return [255, 200, 0]
+    else:
+        return [255, 50, 50]
+
+def score_to_color(score):
+    if score is None:
+        return [128, 128, 128]
+    elif score < 33:
+        return [255, 50, 50]
+    elif score < 66:
+        return [255, 200, 0]
+    else:
+        return [0, 180, 0]
 
 # Pfad zur vorbereiteten Datei
 PRELOADED_PATH = "assets/dab+gnss.json"
@@ -148,7 +185,7 @@ style_dict = {
 }
 map_style = style_dict[style]
 
-map_mode = st.radio("Kartenmodus", ["Standardpunkte", "Signalqualität bewerten"])
+map_mode = st.radio("Kartenmodus", ["Standardpunkte", "Signalqualität bewerten", "Nur RSSI anzeigen", "Nur SNR anzeigen"])
 
 gnss_df = pd.DataFrame(gnss_data)
 gnss_df["timeStamp"] = pd.to_datetime(gnss_df["timeStamp"])
@@ -166,6 +203,34 @@ if not gnss_df.empty:
         layer = pdk.Layer(
             "ScatterplotLayer",
             data=scored_df,
+            get_position="[lon, lat]",
+            get_radius=6,
+            get_fill_color="color",
+            pickable=True
+        )
+    elif map_mode == "Nur RSSI anzeigen" and dab_data:
+        radio_df = pd.DataFrame(dab_data)
+        radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
+        rssi_df = evaluate_single_metric(gnss_df, radio_df, "RSSI")
+        rssi_df = rssi_df.dropna(subset=["RSSI"])
+        rssi_df["color"] = rssi_df["RSSI"].apply(rssi_to_color)
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=rssi_df,
+            get_position="[lon, lat]",
+            get_radius=6,
+            get_fill_color="color",
+            pickable=True
+        )
+    elif map_mode == "Nur SNR anzeigen" and dab_data:
+        radio_df = pd.DataFrame(dab_data)
+        radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
+        snr_df = evaluate_single_metric(gnss_df, radio_df, "SNR")
+        snr_df = snr_df.dropna(subset=["SNR"])
+        snr_df["color"] = snr_df["SNR"].apply(snr_to_color)
+        layer = pdk.Layer(
+            "ScatterplotLayer",
+            data=snr_df,
             get_position="[lon, lat]",
             get_radius=6,
             get_fill_color="color",
