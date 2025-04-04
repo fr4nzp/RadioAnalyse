@@ -51,17 +51,15 @@ def evaluate_single_metric(gnss_df, radio_df, column):
     gnss_df[column] = values
     return gnss_df
 
-# Farbskalen nach Benchmarks
-
 def rssi_to_color(rssi):
     if rssi is None:
         return [128, 128, 128]
     elif rssi >= -80:
-        return [0, 180, 0]  # grün
+        return [0, 180, 0]
     elif rssi >= -95:
-        return [255, 200, 0]  # gelb
+        return [255, 200, 0]
     else:
-        return [255, 50, 50]  # rot
+        return [255, 50, 50]
 
 def snr_to_color(snr):
     if snr is None:
@@ -83,9 +81,15 @@ def score_to_color(score):
     else:
         return [0, 180, 0]
 
-# Pfad zur vorbereiteten Datei
-PRELOADED_PATH = "assets/dab+gnss.json"
+def make_tooltip_df(df, columns):
+    df = df.copy()
+    for col in columns:
+        if col not in df:
+            df[col] = None
+    return df
 
+# Datei laden
+PRELOADED_PATH = "assets/dab+gnss.json"
 if os.path.exists(PRELOADED_PATH):
     with open(PRELOADED_PATH, "r", encoding="utf-8") as f:
         raw_data = json.load(f)
@@ -94,10 +98,11 @@ else:
     st.error("❌ Keine vorverarbeitete Datei gefunden. Bitte zuerst die Extraktion ausführen.")
     st.stop()
 
-# Aufteilen in dab + gnss
+# Daten trennen
 dab_data = filter_entries(raw_data, "dab")
 gnss_data = filter_entries(raw_data, "gnss")
 
+# === Diagramm ===
 if dab_data:
     df = pd.DataFrame(dab_data)
     df["timeStamp"] = pd.to_datetime(df["timeStamp"])
@@ -112,10 +117,8 @@ if dab_data:
     show_trend = st.checkbox("Tendenzlinie anzeigen")
 
     chart_df = df.set_index("timeStamp")[[selected_column]].copy()
-
     if resample_interval != "Original":
         chart_df = chart_df.resample(resample_interval).mean().dropna()
-
     chart_df.reset_index(inplace=True)
 
     base = alt.Chart(chart_df).mark_circle(size=30).encode(
@@ -125,8 +128,6 @@ if dab_data:
     )
 
     layers = []
-
-    # Benchmark-Bänder
     if selected_column == "RSSI":
         bands = pd.DataFrame([
             {"y0": -80, "y1": 0, "color": "#d0f0c0"},
@@ -154,24 +155,21 @@ if dab_data:
         layers.append(band)
 
     layers.append(base)
-
     if show_average:
         mean_value = chart_df[selected_column].mean()
         mean_line = alt.Chart(pd.DataFrame({"y": [mean_value]})).mark_rule(color="green").encode(y="y")
         layers.append(mean_line)
-
     if show_trend:
         trend_line = base.transform_loess("timeStamp", selected_column, bandwidth=0.3).mark_line(color="orange")
         layers.append(trend_line)
 
     st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
-
     with st.expander("📋 Zeige Radiodaten als Tabelle"):
         st.dataframe(df)
 
-# GNSS Map mit Toggle
+# === Karte ===
 st.subheader("📍 GNSS-Daten auf Karte")
-
+map_mode = st.radio("Kartenmodus", ["Standardpunkte", "Signalqualität bewerten", "Nur RSSI anzeigen", "Nur SNR anzeigen"])
 style = st.selectbox("🗺️ Wähle Kartenstil", [
     "streets", "light", "dark", "satellite", "satellite-streets", "outdoors"
 ])
@@ -185,74 +183,56 @@ style_dict = {
 }
 map_style = style_dict[style]
 
-map_mode = st.radio("Kartenmodus", ["Standardpunkte", "Signalqualität bewerten", "Nur RSSI anzeigen", "Nur SNR anzeigen"])
-
 gnss_df = pd.DataFrame(gnss_data)
 gnss_df["timeStamp"] = pd.to_datetime(gnss_df["timeStamp"])
+gnss_df["timeStr"] = gnss_df["timeStamp"].dt.strftime("%Y-%m-%d %H:%M:%S.%f")
+mid_lat = gnss_df["lat"].mean()
+mid_lon = gnss_df["lon"].mean()
 
-if not gnss_df.empty:
-    mid_lat = gnss_df["lat"].mean()
-    mid_lon = gnss_df["lon"].mean()
+radio_df = pd.DataFrame(dab_data)
+radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
 
-    if map_mode == "Signalqualität bewerten" and dab_data:
-        radio_df = pd.DataFrame(dab_data)
-        radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
-        scored_df = evaluate_signal_quality(gnss_df, radio_df)
-        scored_df = scored_df.dropna(subset=["signal_score"])
-        scored_df["color"] = scored_df["signal_score"].apply(score_to_color)
-        layer = pdk.Layer(
-            "ScatterplotLayer",
-            data=scored_df,
-            get_position="[lon, lat]",
-            get_radius=6,
-            get_fill_color="color",
-            pickable=True
-        )
-    elif map_mode == "Nur RSSI anzeigen" and dab_data:
-        radio_df = pd.DataFrame(dab_data)
-        radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
-        rssi_df = evaluate_single_metric(gnss_df, radio_df, "RSSI")
-        rssi_df = rssi_df.dropna(subset=["RSSI"])
-        rssi_df["color"] = rssi_df["RSSI"].apply(rssi_to_color)
-        layer = pdk.Layer(
-            "ScatterplotLayer",
-            data=rssi_df,
-            get_position="[lon, lat]",
-            get_radius=6,
-            get_fill_color="color",
-            pickable=True
-        )
-    elif map_mode == "Nur SNR anzeigen" and dab_data:
-        radio_df = pd.DataFrame(dab_data)
-        radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
-        snr_df = evaluate_single_metric(gnss_df, radio_df, "SNR")
-        snr_df = snr_df.dropna(subset=["SNR"])
-        snr_df["color"] = snr_df["SNR"].apply(snr_to_color)
-        layer = pdk.Layer(
-            "ScatterplotLayer",
-            data=snr_df,
-            get_position="[lon, lat]",
-            get_radius=6,
-            get_fill_color="color",
-            pickable=True
-        )
-    else:
-        layer = pdk.Layer(
-            "ScatterplotLayer",
-            data=gnss_df,
-            get_position="[lon, lat]",
-            get_radius=5,
-            get_fill_color=[255, 0, 0],
-            pickable=True
-        )
+if map_mode == "Signalqualität bewerten":
+    gnss_df = evaluate_signal_quality(gnss_df, radio_df)
+    gnss_df["color"] = gnss_df["signal_score"].apply(score_to_color)
+    tooltip_template = "<b>Zeit:</b> {timeStr}<br/><b>Score:</b> {signal_score}"
+elif map_mode == "Nur RSSI anzeigen":
+    gnss_df = evaluate_single_metric(gnss_df, radio_df, "RSSI")
+    gnss_df["color"] = gnss_df["RSSI"].apply(rssi_to_color)
+    tooltip_template = "<b>Zeit:</b> {timeStr}<br/><b>RSSI:</b> {RSSI}"
+elif map_mode == "Nur SNR anzeigen":
+    gnss_df = evaluate_single_metric(gnss_df, radio_df, "SNR")
+    gnss_df["color"] = gnss_df["SNR"].apply(snr_to_color)
+    tooltip_template = "<b>Zeit:</b> {timeStr}<br/><b>SNR:</b> {SNR}"
+else:
+    gnss_df["color"] = [[255, 0, 0]] * len(gnss_df)
+    tooltip_template = "<b>Zeit:</b> {timeStr}"
 
-    view_state = pdk.ViewState(
-        latitude=mid_lat,
-        longitude=mid_lon,
-        zoom=15,
-        pitch=0
-    )
-    st.pydeck_chart(pdk.Deck(layers=[layer], initial_view_state=view_state, map_style=map_style))
+gnss_df = make_tooltip_df(gnss_df, ["timeStr", "RSSI", "SNR", "signal_score"])
 
-    with st.expander("📋 Zeige GNSS-Daten als Tabelle"):
-        st.dataframe(gnss_df)
+layer = pdk.Layer(
+    "ScatterplotLayer",
+    data=gnss_df,
+    get_position="[lon, lat]",
+    get_radius=6,
+    get_fill_color="color",
+    pickable=True
+)
+
+view_state = pdk.ViewState(latitude=mid_lat, longitude=mid_lon, zoom=15, pitch=0)
+
+deck = pdk.Deck(
+    layers=[layer],
+    initial_view_state=view_state,
+    map_style=map_style,
+    tooltip={
+        "html": tooltip_template,
+        "style": {"backgroundColor": "white", "color": "black"}
+    }
+)
+
+st.pydeck_chart(deck)
+
+# GNSS Tabelle anzeigen
+with st.expander("📋 Zeige GNSS-Daten als Tabelle"):
+    st.dataframe(gnss_df)
