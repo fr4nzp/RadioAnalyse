@@ -35,6 +35,17 @@ def evaluate_signal_quality(gnss_df, radio_df):
     gnss_df["signal_score"] = scores
     return gnss_df
 
+# Farbverlauf von rot (schlecht) über gelb zu grün (gut)
+def score_to_color(score):
+    if score is None:
+        return [128, 128, 128]  # grau bei fehlendem Score
+    elif score < 33:
+        return [255, 50, 50]  # rot
+    elif score < 66:
+        return [255, 200, 0]  # gelb
+    else:
+        return [0, 180, 0]  # grün
+
 # Pfad zur vorbereiteten Datei
 PRELOADED_PATH = "assets/dab+gnss.json"
 
@@ -151,7 +162,7 @@ if not gnss_df.empty:
         radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
         scored_df = evaluate_signal_quality(gnss_df, radio_df)
         scored_df = scored_df.dropna(subset=["signal_score"])
-        scored_df["color"] = scored_df["signal_score"].apply(lambda x: [255 - int(x * 2.55), int(x * 2.55), 0])
+        scored_df["color"] = scored_df["signal_score"].apply(score_to_color)
         layer = pdk.Layer(
             "ScatterplotLayer",
             data=scored_df,
