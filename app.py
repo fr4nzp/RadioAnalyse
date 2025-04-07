@@ -161,7 +161,7 @@ st.subheader("📍 GNSS-Daten auf Karte")
 
 map_mode = st.radio("Kartenmodus", ["Standardpunkte", "Nur RSSI anzeigen", "Nur SNR anzeigen", "Nur FS anzeigen"])
 style = st.selectbox("🗺️ Kartenstil", [
-    "streets", "light", "dark", "satellite", "satellite-streets", "outdoors"
+    "satellite", "light", "dark", "streets", "satellite-streets", "outdoors"
 ])
 style_dict = {
     "streets": "mapbox://styles/mapbox/streets-v11",
@@ -175,7 +175,7 @@ map_style = style_dict[style]
 
 gnss_df = pd.DataFrame(gnss_data)
 gnss_df["timeStamp"] = pd.to_datetime(gnss_df["timeStamp"])
-gnss_df["timeStr"] = gnss_df["timeStamp"].dt.strftime("%Y-%m-%d %H:%M:%S.%f")
+gnss_df["timeStr"] = gnss_df["timeStamp"].dt.strftime("%H:%M:%S")
 
 radio_df = pd.DataFrame(radio_data)
 radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
