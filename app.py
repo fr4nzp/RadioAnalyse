@@ -82,8 +82,9 @@ else:
     selected_metric = st.selectbox("Welche Metrik möchtest du anzeigen?", metric_cols)
 
     resample = st.selectbox("Zeitintervall (für Mittelwert)", ["Original", "1s", "5s", "10s"])
+    show_points = st.checkbox("Punkte anzeigen", value=True)
     show_avg = st.checkbox("Durchschnitt anzeigen")
-    show_trend = st.checkbox("Tendenzlinie anzeigen")
+    show_trend = st.checkbox("Tendenzlinien anzeigen")
 
     chart_data = []
     for src in radio_df["source"].unique():
@@ -96,24 +97,35 @@ else:
         chart_data.append(sub)
 
     combined_df = pd.concat(chart_data)
-    base = alt.Chart(combined_df).mark_circle(size=30).encode(
-        x="timeStamp:T",
-        y=alt.Y(selected_metric, title=selected_metric),
-        color="source:N",
-        tooltip=["timeStamp:T", selected_metric, "source"]
-    )
+    layers = []
 
-    layers = [base]
+    if show_points:
+        base = alt.Chart(combined_df).mark_circle(size=30).encode(
+            x="timeStamp:T",
+            y=alt.Y(selected_metric, title=selected_metric),
+            color="source:N",
+            tooltip=["timeStamp:T", selected_metric, "source"]
+        )
+        layers.append(base)
+
     if show_avg:
         for src in combined_df["source"].unique():
             mean_val = combined_df[combined_df["source"] == src][selected_metric].mean()
-            rule = alt.Chart(pd.DataFrame({"y": [mean_val]})).mark_rule(strokeDash=[4,2]).encode(y="y").properties(title=f"{src} Durchschnitt")
+            rule = alt.Chart(pd.DataFrame({"y": [mean_val]})).mark_rule(strokeDash=[4,2], color="gray").encode(y="y")
             layers.append(rule)
+
     if show_trend:
-        trend = base.transform_loess("timeStamp", selected_metric, bandwidth=0.3).mark_line()
-        layers.append(trend)
+        for src in combined_df["source"].unique():
+            trend_data = combined_df[combined_df["source"] == src]
+            trend = alt.Chart(trend_data).transform_loess("timeStamp", selected_metric, bandwidth=0.3).mark_line().encode(
+                x="timeStamp:T",
+                y=selected_metric,
+                color=alt.value("black")  # Optional: nutze `source:N` für bunte Linien
+            ).properties(title=f"Tendenzlinie: {src}")
+            layers.append(trend)
 
     st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
+
 
 # ==================== Karte ====================
 st.subheader("📍 GNSS-Karte")
