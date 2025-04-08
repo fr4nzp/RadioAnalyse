@@ -112,6 +112,7 @@ for src in radio_df["source"].unique():
     sub = sub.set_index("timeStamp")[[selected_metric, "distance_m", "lat", "lon"]]
     if resample != "Original":
         sub = sub.resample(resample).mean().dropna()
+
     sub["source"] = src
     sub.reset_index(inplace=True)
     chart_data.append(sub)
@@ -161,6 +162,17 @@ st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
 
 # ==================== Karte ====================
 st.subheader("📍 GNSS-Daten auf Karte")
+
+# Optional: Datensatzfilter, falls mehrere vorhanden
+available_sources = list(gnss_df["source"].unique())
+if len(available_sources) > 1:
+    selected_gnss_sources = st.multiselect(
+        "Welche Fahrten sollen auf der Karte angezeigt werden?",
+        options=available_sources,
+        default=available_sources
+    )
+    gnss_df = gnss_df[gnss_df["source"].isin(selected_gnss_sources)]
+
 
 map_mode = st.radio("Kartenmodus", ["Standardpunkte", "Signalqualität bewerten", "Nur RSSI anzeigen", "Nur SNR anzeigen"])
 style = st.selectbox("🗺️ Wähle Kartenstil", ["satellite","streets", "light", "dark",  "satellite-streets", "outdoors"])
