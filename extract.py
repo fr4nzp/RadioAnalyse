@@ -8,7 +8,7 @@ def extract_dab(data):
     dab_entries = []
     for entry in data:
         msg = entry.get("msgData", "")
-        if "LRID0x161" in msg or "LRID0x162" in msg:
+        if "LRID0x161" in msg:  # Nur noch 161
             match = re.search(r"F=(\d+)kHz.*?RSSI=(-?\d+).*?SNR=(\d+)", msg)
             if match:
                 f, rssi, snr = match.groups()
@@ -25,7 +25,7 @@ def extract_fm(data):
     fm_entries = []
     for entry in data:
         msg = entry.get("msgData", "")
-        if "T[3/0x232]" in msg or "T[4/0x233]" in msg:
+        if "T[1/0x231]" in msg:  # Nur noch dieser FM-Tuner erlaubt
             match = re.search(r"fq (\d+), fs (\d+), .*?snr (\d+)", msg)
             if match:
                 fq, fs, snr = match.groups()
@@ -85,7 +85,7 @@ def main(input_path, output_prefix):
 if __name__ == "__main__":
     import argparse
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", type=str, default="traces/MacanFahrtFM.json", help="Pfad zur Trace-Datei")
+    parser.add_argument("--input", type=str, default="traces/MacanFahrtTest.json", help="Pfad zur Trace-Datei")
     parser.add_argument("--output", type=str, default="", help="Optionaler Präfix für die Output-Dateien")
     args = parser.parse_args()
 

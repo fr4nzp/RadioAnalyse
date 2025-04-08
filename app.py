@@ -3,7 +3,6 @@ import streamlit as st
 import json
 import pandas as pd
 import os
-import re
 import pydeck as pdk
 import altair as alt
 from datetime import timedelta
@@ -15,16 +14,30 @@ st.title("📡 Radio Trace Analyzer")
 radio_mode = st.radio("🔊 Wähle Radiotyp", ["DAB", "FM"], index=0)
 
 # === Datei wählen ===
-PRELOADED_PATH = "assets/dab+gnss.json" if radio_mode == "DAB" else "assets/fm+gnss.json"
+st.subheader("📁 Datenquelle wählen")
+data_source = st.radio("Datenquelle", ["Lokale Datei", "Datei hochladen"], horizontal=True)
 
-if not os.path.exists(PRELOADED_PATH):
-    st.error(f"❌ Datei nicht gefunden: {PRELOADED_PATH}")
-    st.stop()
+uploaded_file = None
+raw_data = None
 
-with open(PRELOADED_PATH, "r", encoding="utf-8") as f:
-    raw_data = json.load(f)
+if data_source == "Datei hochladen":
+    uploaded_file = st.file_uploader("Wähle eine kombinierte JSON-Datei (z. B. dab+gnss.json)", type="json")
 
-st.success(f"{len(raw_data)} Einträge aus {PRELOADED_PATH} geladen.")
+    if uploaded_file:
+        raw_data = json.load(uploaded_file)
+        st.success(f"{len(raw_data)} Einträge aus hochgeladener Datei geladen.")
+    else:
+        st.warning("Bitte lade eine Datei hoch.")
+        st.stop()
+else:
+    PRELOADED_PATH = "assets/dab+gnss.json" if radio_mode == "DAB" else "assets/fm+gnss.json"
+    if not os.path.exists(PRELOADED_PATH):
+        st.error(f"❌ Datei nicht gefunden: {PRELOADED_PATH}")
+        st.stop()
+    with open(PRELOADED_PATH, "r", encoding="utf-8") as f:
+        raw_data = json.load(f)
+    st.success(f"{len(raw_data)} Einträge aus {PRELOADED_PATH} geladen.")
+
 
 # === Datentrennung ===
 def filter_entries(data, typ):
