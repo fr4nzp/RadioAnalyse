@@ -187,16 +187,19 @@ else:
         "Nur TL anzeigen" if radio_mode == "DAB" else "Nur FS anzeigen"
     ])
 
-    visible_sources = st.multiselect("Welche Fahrten sollen angezeigt werden?", 
+    # Sichtbarkeit pro Quelle
+    visible_sources = st.multiselect("Welche Fahrten sollen auf der Karte angezeigt werden?", 
                                      options=gnss_df["source"].unique().tolist(), 
                                      default=gnss_df["source"].unique().tolist())
 
     gnss_df = gnss_df[gnss_df["source"].isin(visible_sources)].copy()
     radio_df = radio_df[radio_df["source"].isin(visible_sources)].copy()
 
+    # Style-Auswahl (default: satellite)
     map_style = st.selectbox("🗺️ Kartenstil", [
-         "satellite","streets", "light", "dark", "satellite-streets", "outdoors"
-    ])
+        "satellite", "streets", "light", "dark", "satellite-streets", "outdoors"
+    ], index=0)
+    
     style_dict = {
         "streets": "mapbox://styles/mapbox/streets-v11",
         "light": "mapbox://styles/mapbox/light-v10",
@@ -207,6 +210,7 @@ else:
     }
     map_style_url = style_dict[map_style]
 
+    # Farbskalen
     def score_to_color(score):
         if score is None or pd.isna(score):
             return [50, 50, 50]
@@ -230,45 +234,72 @@ else:
     def tl_to_color(tl):
         if tl is None or pd.isna(tl):
             return [50, 50, 50]
-        elif tl >= 71:
+        elif tl >= 70:
             return [0, 180, 0]
-        elif tl >= 60:
+        elif tl >= 50:
             return [255, 200, 0]
         else:
             return [255, 50, 50]
 
+    def safe_color(val, func):
+        try:
+            return func(val)
+        except:
+            return [50, 50, 50]
+
     def evaluate_metric(df, radio_df, column, color_func):
         values = []
+        colors = []
         radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
         for _, row in df.iterrows():
             subset = radio_df[radio_df["source"] == row["source"]]
-            nearby = subset[(subset["timeStamp"] - row["timeStamp"]).abs() <= timedelta(seconds=1)]
-            val = nearby[column].mean() if not nearby.empty else None
+            if subset.empty:
+                values.append(None)
+                colors.append([50, 50, 50])
+                continue
+            time_diffs = (subset["timeStamp"] - row["timeStamp"]).abs()
+            min_idx = time_diffs.idxmin()
+            min_diff = time_diffs[min_idx]
+            if min_diff <= timedelta(seconds=1):
+                val = subset.loc[min_idx, column]
+            else:
+                val = None
             values.append(val)
+            colors.append(safe_color(val, color_func))
         df[column] = values
-        df["color"] = df[column].apply(color_func)
+        df["color"] = colors
         return df
 
     def evaluate_score(df, radio_df):
         scores = []
+        colors = []
+        radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
         for _, row in df.iterrows():
             subset = radio_df[radio_df["source"] == row["source"]]
-            nearby = subset[(subset["timeStamp"] - row["timeStamp"]).abs() <= timedelta(seconds=1)]
-            if not nearby.empty:
-                snr = nearby["SNR"].mean()
-                tl = nearby["TL"].mean() if "TL" in nearby.columns else None
+            if subset.empty:
+                scores.append(None)
+                colors.append([50, 50, 50])
+                continue
+            time_diffs = (subset["timeStamp"] - row["timeStamp"]).abs()
+            min_idx = time_diffs.idxmin()
+            min_diff = time_diffs[min_idx]
+            if min_diff <= timedelta(seconds=1):
+                snr = subset.loc[min_idx, "SNR"]
+                tl = subset.loc[min_idx, "TL"] if "TL" in subset.columns else None
                 snr_score = min(snr / 20, 1) * 100 if pd.notnull(snr) else 0
                 tl_score = min(max((tl + 100) / 30, 0), 1) * 100 if pd.notnull(tl) else 0
                 score = 0.5 * snr_score + 0.5 * tl_score
             else:
                 score = None
             scores.append(score)
+            colors.append(safe_color(score, score_to_color))
         df["score"] = scores
-        df["color"] = df["score"].apply(score_to_color)
+        df["color"] = colors
         return df
 
     gnss_df["timeStr"] = gnss_df["timeStamp"].dt.strftime("%H:%M:%S.%f")
 
+    # === Anzeige-Modus aktivieren ===
     if map_mode == "Signalqualität bewerten (Score)":
         gnss_df = evaluate_score(gnss_df, radio_df)
         tooltip_html = "<b>Zeit:</b> {timeStr}<br/><b>Score:</b> {score:.1f}"
@@ -284,6 +315,7 @@ else:
         gnss_df["color"] = [[255, 0, 0]] * len(gnss_df)
         tooltip_html = "<b>Zeit:</b> {timeStr}"
 
+    # Karte erzeugen
     mid_lat = gnss_df["lat"].mean()
     mid_lon = gnss_df["lon"].mean()
 
