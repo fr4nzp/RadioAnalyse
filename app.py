@@ -64,6 +64,7 @@ gnss_df["timeStamp"] = pd.to_datetime(gnss_df["timeStamp"])
 use_gnss_xaxis = st.checkbox("X-Achse: Strecke statt Zeit", value=False)
 
 # Distanzberechnung mit Anpassung
+
 def compute_gnss_distance_per_fahrt(grouped_df):
     grouped = []
     for src, group in grouped_df.groupby("source"):
@@ -99,7 +100,11 @@ radio_df = radio_df.merge(
     on=["timeStamp", "source"], how="left"
 )
 
-metric_cols = ["SNR", "RSSI"] if radio_mode == "DAB" else ["SNR", "FS"]
+# TL Wert bereinigen (z. B. -071 → 71)
+if "TL" in radio_df.columns:
+    radio_df["TL"] = radio_df["TL"].apply(lambda x: int(str(x)[-2:]) if pd.notnull(x) else None)
+
+metric_cols = ["SNR", "TL"] if radio_mode == "DAB" else ["SNR", "FS"]
 selected_metric = st.selectbox("Welche Metrik möchtest du anzeigen?", metric_cols)
 resample = st.selectbox("Zeitintervall (für Mittelwert)", ["Original", "1s", "5s", "10s"])
 show_points = st.checkbox("Punkte anzeigen", value=True)
@@ -112,7 +117,6 @@ for src in radio_df["source"].unique():
     sub = sub.set_index("timeStamp")[[selected_metric, "distance_m", "lat", "lon"]]
     if resample != "Original":
         sub = sub.resample(resample).mean().dropna()
-
     sub["source"] = src
     sub.reset_index(inplace=True)
     chart_data.append(sub)
@@ -125,7 +129,7 @@ if show_points:
     base = alt.Chart(combined_df).mark_circle(size=30).encode(
         x=x_axis,
         y=alt.Y(selected_metric, title=selected_metric),
-        color=alt.Color("source:N", title="Quelle"),
+        color="source:N",
         tooltip=[
             alt.Tooltip("timeStamp:T", title="Zeit", format="%H:%M:%S.%L"),
             alt.Tooltip("lat:Q", title="Latitude"),
@@ -145,155 +149,157 @@ if show_avg:
         layers.append(rule)
 
 if show_trend:
-    trend = alt.Chart(combined_df).transform_loess(
-        "distance_m" if use_gnss_xaxis else "timeStamp",
-        selected_metric,
-        groupby=["source"],
-        bandwidth=0.3
-    ).mark_line().encode(
-        x=x_axis,
-        y=alt.Y(selected_metric, title=selected_metric),
-        color=alt.Color("source:N", title="Quelle")
-    )
-    layers.append(trend)
+    for src in combined_df["source"].unique():
+        trend_data = combined_df[combined_df["source"] == src]
+        trend = alt.Chart(trend_data).transform_loess(
+            "distance_m" if use_gnss_xaxis else "timeStamp",
+            selected_metric,
+            bandwidth=0.3
+        ).mark_line().encode(
+            x=x_axis,
+            y=selected_metric,
+            color="source:N"
+        )
+        layers.append(trend)
 
 st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
 
-
-# ==================== Karte ====================
+# ==================== GNSS Map ====================
 st.subheader("📍 GNSS-Daten auf Karte")
 
-# Optional: Datensatzfilter, falls mehrere vorhanden
-available_sources = list(gnss_df["source"].unique())
-if len(available_sources) > 1:
-    selected_gnss_sources = st.multiselect(
-        "Welche Fahrten sollen auf der Karte angezeigt werden?",
-        options=available_sources,
-        default=available_sources
-    )
-    gnss_df = gnss_df[gnss_df["source"].isin(selected_gnss_sources)]
-
-
-map_mode = st.radio("Kartenmodus", ["Standardpunkte", "Signalqualität bewerten", "Nur RSSI anzeigen", "Nur SNR anzeigen"])
-style = st.selectbox("🗺️ Wähle Kartenstil", ["satellite","streets", "light", "dark",  "satellite-streets", "outdoors"])
-style_dict = {
-        "satellite": "mapbox://styles/mapbox/satellite-v9",
-    "streets": "mapbox://styles/mapbox/streets-v11",
-    "light": "mapbox://styles/mapbox/light-v10",
-    "dark": "mapbox://styles/mapbox/dark-v10",
-    "satellite-streets": "mapbox://styles/mapbox/satellite-streets-v11",
-    "outdoors": "mapbox://styles/mapbox/outdoors-v11"
-}
-map_style = style_dict[style]
-
-def score_to_color(score):
-    if score is None: return [0, 0, 0]
-    elif score < 33: return [255, 50, 50]
-    elif score < 66: return [255, 200, 0]
-    else: return [0, 180, 0]
-
-def rssi_to_color(rssi):
-    if rssi is None: return [0, 0, 0]
-    elif rssi >= -80: return [0, 180, 0]
-    elif rssi >= -95: return [255, 200, 0]
-    else: return [255, 50, 50]
-
-def snr_to_color(snr):
-    if snr is None: return [0, 0, 0]
-    elif snr >= 15: return [0, 180, 0]
-    elif snr >= 8: return [255, 200, 0]
-    else: return [255, 50, 50]
-
-def evaluate_signal_quality(gnss_df, radio_df):
-    scores = []
-    radio_df = radio_df.copy()
-    for _, row in gnss_df.iterrows():
-        t = row["timeStamp"]
-        subset = radio_df[(radio_df["timeStamp"] >= t - timedelta(seconds=1)) & (radio_df["timeStamp"] <= t + timedelta(seconds=1)) & (radio_df["source"] == row["source"])]
-        if not subset.empty:
-            snr = subset["SNR"].mean()
-            rssi = subset["RSSI"].mean() if "RSSI" in subset else None
-            snr_score = min(snr / 20, 1) * 100 if pd.notnull(snr) else 0
-            rssi_score = min(max((rssi + 100) / 20, 0), 1) * 100 if pd.notnull(rssi) else 0
-            score = round(0.5 * snr_score + 0.5 * rssi_score, 1)
-        else:
-            score = None
-        scores.append(score)
-    gnss_df = gnss_df.copy()
-    gnss_df["signal_score"] = scores
-    return gnss_df
-
-def evaluate_single_metric(gnss_df, radio_df, column):
-    values = []
-    radio_df = radio_df.copy()
-    for _, row in gnss_df.iterrows():
-        t = row["timeStamp"]
-        subset = radio_df[(radio_df["timeStamp"] >= t - timedelta(seconds=1)) & (radio_df["timeStamp"] <= t + timedelta(seconds=1)) & (radio_df["source"] == row["source"])]
-        if not subset.empty:
-            val = subset[column].mean()
-        else:
-            val = None
-        values.append(val)
-    gnss_df = gnss_df.copy()
-    gnss_df[column] = values
-    return gnss_df
-
-gnss_df["timeStr"] = gnss_df["timeStamp"].dt.strftime("%H:%M:%S")
-
-if map_mode == "Signalqualität bewerten":
-    gnss_df = evaluate_signal_quality(gnss_df, radio_df)
-    gnss_df["color"] = gnss_df["signal_score"].apply(score_to_color)
-    gnss_df["value"] = gnss_df["signal_score"]
-    metric = "Score"
-elif map_mode == "Nur RSSI anzeigen":
-    gnss_df = evaluate_single_metric(gnss_df, radio_df, "RSSI")
-    gnss_df["color"] = gnss_df["RSSI"].apply(rssi_to_color)
-    gnss_df["value"] = gnss_df["RSSI"]
-    metric = "RSSI"
-elif map_mode == "Nur SNR anzeigen":
-    gnss_df = evaluate_single_metric(gnss_df, radio_df, "SNR")
-    gnss_df["color"] = gnss_df["SNR"].apply(snr_to_color)
-    gnss_df["value"] = gnss_df["SNR"]
-    metric = "SNR"
+if gnss_df.empty:
+    st.warning("Keine GNSS-Daten vorhanden.")
 else:
-    gnss_df["color"] = [[255, 0, 0]] * len(gnss_df)
-    gnss_df["value"] = None
-    metric = ""
+    map_mode = st.selectbox("Darstellungsmodus", [
+        "Standardpunkte", 
+        "Signalqualität bewerten (Score)", 
+        "Nur SNR anzeigen", 
+        "Nur TL anzeigen" if radio_mode == "DAB" else "Nur FS anzeigen"
+    ])
 
-tooltip_template = (
-    "<b>Zeit:</b> {{timeStr}}<br/>"
-    "<b>Lat:</b> {{lat}}<br/>"
-    "<b>Lon:</b> {{lon}}<br/>"
-    "<b>{metric}:</b> {{value}}"
-).format(metric=metric)
+    # Sichtbarkeit pro Quelle
+    visible_sources = st.multiselect("Welche Fahrten sollen auf der Karte angezeigt werden?", 
+                                     options=gnss_df["source"].unique().tolist(), 
+                                     default=gnss_df["source"].unique().tolist())
 
-layer = pdk.Layer(
-    "ScatterplotLayer",
-    data=gnss_df,
-    get_position="[lon, lat]",
-    get_radius=6,
-    get_fill_color="color",
-    pickable=True
-)
+    gnss_df = gnss_df[gnss_df["source"].isin(visible_sources)].copy()
+    radio_df = radio_df[radio_df["source"].isin(visible_sources)].copy()
 
-view_state = pdk.ViewState(
-    latitude=gnss_df["lat"].mean(),
-    longitude=gnss_df["lon"].mean(),
-    zoom=14,
-    pitch=0
-)
-
-deck = pdk.Deck(
-    layers=[layer],
-    initial_view_state=view_state,
-    map_style=map_style,
-    tooltip={
-        "html": tooltip_template,
-        "style": {"backgroundColor": "white", "color": "black"}
+    # Style-Auswahl
+    map_style = st.selectbox("🗺️ Kartenstil", [
+        "streets", "light", "dark", "satellite", "satellite-streets", "outdoors"
+    ])
+    style_dict = {
+        "streets": "mapbox://styles/mapbox/streets-v11",
+        "light": "mapbox://styles/mapbox/light-v10",
+        "dark": "mapbox://styles/mapbox/dark-v10",
+        "satellite": "mapbox://styles/mapbox/satellite-v9",
+        "satellite-streets": "mapbox://styles/mapbox/satellite-streets-v11",
+        "outdoors": "mapbox://styles/mapbox/outdoors-v11"
     }
-)
+    map_style_url = style_dict[map_style]
 
-st.pydeck_chart(deck)
+    # Funktionen zur Farbgebung
+    def score_to_color(score):
+        if score is None:
+            return [50, 50, 50]
+        elif score >= 66:
+            return [0, 180, 0]
+        elif score >= 33:
+            return [255, 200, 0]
+        else:
+            return [255, 50, 50]
 
-with st.expander("📋 Zeige GNSS-Daten als Tabelle"):
-    st.dataframe(gnss_df)
+    def snr_to_color(snr):
+        if snr is None:
+            return [50, 50, 50]
+        elif snr >= 15:
+            return [0, 180, 0]
+        elif snr >= 8:
+            return [255, 200, 0]
+        else:
+            return [255, 50, 50]
+
+    def tl_to_color(tl):
+        if tl is None:
+            return [50, 50, 50]
+        elif tl >= -70:
+            return [0, 180, 0]
+        elif tl >= -85:
+            return [255, 200, 0]
+        else:
+            return [255, 50, 50]
+
+    # Metriken berechnen
+    def evaluate_metric(df, radio_df, column, color_func):
+        values = []
+        radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
+        for _, row in df.iterrows():
+            subset = radio_df[radio_df["source"] == row["source"]]
+            nearby = subset[(subset["timeStamp"] - row["timeStamp"]).abs() <= timedelta(seconds=1)]
+            val = nearby[column].mean() if not nearby.empty else None
+            values.append(val)
+        df[column] = values
+        df["color"] = df[column].apply(color_func)
+        return df
+
+    def evaluate_score(df, radio_df):
+        scores = []
+        for _, row in df.iterrows():
+            subset = radio_df[radio_df["source"] == row["source"]]
+            nearby = subset[(subset["timeStamp"] - row["timeStamp"]).abs() <= timedelta(seconds=1)]
+            if not nearby.empty:
+                snr = nearby["SNR"].mean()
+                tl = nearby["TL"].mean() if "TL" in nearby.columns else None
+                snr_score = min(snr / 20, 1) * 100 if pd.notnull(snr) else 0
+                tl_score = min(max((tl + 100) / 30, 0), 1) * 100 if pd.notnull(tl) else 0
+                score = 0.5 * snr_score + 0.5 * tl_score
+            else:
+                score = None
+            scores.append(score)
+        df["score"] = scores
+        df["color"] = df["score"].apply(score_to_color)
+        return df
+
+    # Tooltip vorbereiten
+    gnss_df["timeStr"] = gnss_df["timeStamp"].dt.strftime("%H:%M:%S.%f")
+
+    if map_mode == "Signalqualität bewerten (Score)":
+        gnss_df = evaluate_score(gnss_df, radio_df)
+        tooltip_html = "<b>Zeit:</b> {timeStr}<br/><b>Score:</b> {score:.1f}"
+    elif map_mode == "Nur SNR anzeigen":
+        gnss_df = evaluate_metric(gnss_df, radio_df, "SNR", snr_to_color)
+        tooltip_html = "<b>Zeit:</b> {timeStr}<br/><b>SNR:</b> {SNR}"
+    elif map_mode == "Nur TL anzeigen" or map_mode == "Nur FS anzeigen":
+        col = "TL" if "TL" in radio_df.columns else "FS"
+        color_func = tl_to_color if col == "TL" else snr_to_color
+        gnss_df = evaluate_metric(gnss_df, radio_df, col, color_func)
+        tooltip_html = f"<b>Zeit:</b> {{timeStr}}<br/><b>{col}:</b> "+"{"+col+"}"
+    else:
+        gnss_df["color"] = [[255, 0, 0]] * len(gnss_df)
+        tooltip_html = "<b>Zeit:</b> {timeStr}"
+
+    # PyDeck Layer
+    mid_lat = gnss_df["lat"].mean()
+    mid_lon = gnss_df["lon"].mean()
+
+    layer = pdk.Layer(
+        "ScatterplotLayer",
+        data=gnss_df,
+        get_position="[lon, lat]",
+        get_radius=6,
+        get_fill_color="color",
+        pickable=True
+    )
+
+    view_state = pdk.ViewState(latitude=mid_lat, longitude=mid_lon, zoom=14)
+
+    st.pydeck_chart(pdk.Deck(
+        layers=[layer],
+        initial_view_state=view_state,
+        map_style=map_style_url,
+        tooltip={"html": tooltip_html, "style": {"color": "black", "backgroundColor": "white"}}
+    ))
+
+    with st.expander("📋 GNSS-Tabelle anzeigen"):
+        st.dataframe(gnss_df)
