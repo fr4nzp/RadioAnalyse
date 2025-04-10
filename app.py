@@ -187,19 +187,17 @@ else:
         "Nur TL anzeigen" if radio_mode == "DAB" else "Nur FS anzeigen"
     ])
 
-    # Sichtbarkeit pro Quelle
-    visible_sources = st.multiselect("Welche Fahrten sollen auf der Karte angezeigt werden?", 
+    visible_sources = st.multiselect("Welche Fahrten sollen angezeigt werden?", 
                                      options=gnss_df["source"].unique().tolist(), 
                                      default=gnss_df["source"].unique().tolist())
 
     gnss_df = gnss_df[gnss_df["source"].isin(visible_sources)].copy()
     radio_df = radio_df[radio_df["source"].isin(visible_sources)].copy()
 
-    # Style-Auswahl (default: satellite)
     map_style = st.selectbox("🗺️ Kartenstil", [
         "satellite", "streets", "light", "dark", "satellite-streets", "outdoors"
     ], index=0)
-    
+
     style_dict = {
         "streets": "mapbox://styles/mapbox/streets-v11",
         "light": "mapbox://styles/mapbox/light-v10",
@@ -210,112 +208,110 @@ else:
     }
     map_style_url = style_dict[map_style]
 
-    # Farbskalen
-    def score_to_color(score):
-        if score is None or pd.isna(score):
-            return [50, 50, 50]
-        elif score >= 66:
-            return [0, 180, 0]
-        elif score >= 33:
-            return [255, 200, 0]
-        else:
-            return [255, 50, 50]
-
     def snr_to_color(snr):
-        if snr is None or pd.isna(snr):
-            return [50, 50, 50]
-        elif snr >= 15:
-            return [0, 180, 0]
-        elif snr >= 8:
-            return [255, 200, 0]
-        else:
-            return [255, 50, 50]
+        if pd.isna(snr): return [50, 50, 50]
+        elif snr >= 15: return [0, 180, 0]
+        elif snr >= 8: return [255, 200, 0]
+        else: return [255, 50, 50]
 
     def tl_to_color(tl):
-        if tl is None or pd.isna(tl):
-            return [50, 50, 50]
-        elif tl >= 70:
-            return [0, 180, 0]
-        elif tl >= 50:
-            return [255, 200, 0]
-        else:
-            return [255, 50, 50]
+        if pd.isna(tl): return [50, 50, 50]
+        elif tl >= 70: return [0, 180, 0]
+        elif tl >= 50: return [255, 200, 0]
+        else: return [255, 50, 50]
 
-    def safe_color(val, func):
-        try:
-            return func(val)
-        except:
-            return [50, 50, 50]
+    def score_to_color(score):
+        if pd.isna(score): return [50, 50, 50]
+        elif score >= 66: return [0, 180, 0]
+        elif score >= 33: return [255, 200, 0]
+        else: return [255, 50, 50]
 
-    def evaluate_metric(df, radio_df, column, color_func):
-        values = []
-        colors = []
-        radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
-        for _, row in df.iterrows():
-            subset = radio_df[radio_df["source"] == row["source"]]
-            if subset.empty:
-                values.append(None)
-                colors.append([50, 50, 50])
+    gnss_df["timeStamp"] = pd.to_datetime(gnss_df["timeStamp"])
+    radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
+    gnss_df["timeStr"] = gnss_df["timeStamp"].dt.strftime("%H:%M:%S.%f")
+
+    # Neue Logik: Mittelwert aus Zeitbereich GNSS_prev -> GNSS_now
+    def evaluate_by_interval(df, radio_df, column, color_func):
+        df = df.sort_values("timeStamp").reset_index(drop=True)
+        result_vals = []
+        result_colors = []
+
+        for idx in range(len(df)):
+            curr_row = df.iloc[idx]
+            if idx == 0:
+                result_vals.append(None)
+                result_colors.append([50, 50, 50])
                 continue
-            time_diffs = (subset["timeStamp"] - row["timeStamp"]).abs()
-            min_idx = time_diffs.idxmin()
-            min_diff = time_diffs[min_idx]
-            if min_diff <= timedelta(seconds=1):
-                val = subset.loc[min_idx, column]
-            else:
-                val = None
-            values.append(val)
-            colors.append(safe_color(val, color_func))
-        df[column] = values
-        df["color"] = colors
+            prev_time = df.iloc[idx - 1]["timeStamp"]
+            curr_time = curr_row["timeStamp"]
+
+            subset = radio_df[
+                (radio_df["source"] == curr_row["source"]) &
+                (radio_df["timeStamp"] > prev_time) &
+                (radio_df["timeStamp"] <= curr_time)
+            ]
+
+            val = subset[column].mean() if not subset.empty else None
+            result_vals.append(val)
+            result_colors.append(color_func(val) if pd.notna(val) else [50, 50, 50])
+
+        df[column] = result_vals
+        df["color"] = result_colors
         return df
 
-    def evaluate_score(df, radio_df):
+    def evaluate_score_interval(df, radio_df):
+        df = df.sort_values("timeStamp").reset_index(drop=True)
         scores = []
         colors = []
-        radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
-        for _, row in df.iterrows():
-            subset = radio_df[radio_df["source"] == row["source"]]
-            if subset.empty:
+
+        for idx in range(len(df)):
+            curr_row = df.iloc[idx]
+            if idx == 0:
                 scores.append(None)
                 colors.append([50, 50, 50])
                 continue
-            time_diffs = (subset["timeStamp"] - row["timeStamp"]).abs()
-            min_idx = time_diffs.idxmin()
-            min_diff = time_diffs[min_idx]
-            if min_diff <= timedelta(seconds=1):
-                snr = subset.loc[min_idx, "SNR"]
-                tl = subset.loc[min_idx, "TL"] if "TL" in subset.columns else None
+            prev_time = df.iloc[idx - 1]["timeStamp"]
+            curr_time = curr_row["timeStamp"]
+
+            subset = radio_df[
+                (radio_df["source"] == curr_row["source"]) &
+                (radio_df["timeStamp"] > prev_time) &
+                (radio_df["timeStamp"] <= curr_time)
+            ]
+
+            if subset.empty:
+                scores.append(None)
+                colors.append([50, 50, 50])
+            else:
+                snr = subset["SNR"].mean() if "SNR" in subset.columns else None
+                tl = subset["TL"].mean() if "TL" in subset.columns else None
                 snr_score = min(snr / 20, 1) * 100 if pd.notnull(snr) else 0
                 tl_score = min(max((tl + 100) / 30, 0), 1) * 100 if pd.notnull(tl) else 0
                 score = 0.5 * snr_score + 0.5 * tl_score
-            else:
-                score = None
-            scores.append(score)
-            colors.append(safe_color(score, score_to_color))
+                scores.append(score)
+                colors.append(score_to_color(score))
+
         df["score"] = scores
         df["color"] = colors
         return df
 
-    gnss_df["timeStr"] = gnss_df["timeStamp"].dt.strftime("%H:%M:%S.%f")
-
-    # === Anzeige-Modus aktivieren ===
+    # Map Mode
     if map_mode == "Signalqualität bewerten (Score)":
-        gnss_df = evaluate_score(gnss_df, radio_df)
+        gnss_df = evaluate_score_interval(gnss_df, radio_df)
         tooltip_html = "<b>Zeit:</b> {timeStr}<br/><b>Score:</b> {score:.1f}"
     elif map_mode == "Nur SNR anzeigen":
-        gnss_df = evaluate_metric(gnss_df, radio_df, "SNR", snr_to_color)
+        gnss_df = evaluate_by_interval(gnss_df, radio_df, "SNR", snr_to_color)
         tooltip_html = "<b>Zeit:</b> {timeStr}<br/><b>SNR:</b> {SNR}"
     elif map_mode == "Nur TL anzeigen" or map_mode == "Nur FS anzeigen":
-        col = "TL" if "TL" in radio_df.columns else "FS"
-        color_func = tl_to_color if col == "TL" else snr_to_color
-        gnss_df = evaluate_metric(gnss_df, radio_df, col, color_func)
-        tooltip_html = f"<b>Zeit:</b> {{timeStr}}<br/><b>{col}:</b> "+"{"+col+"}"
+        column = "TL" if "TL" in radio_df.columns else "FS"
+        color_func = tl_to_color if column == "TL" else snr_to_color
+        gnss_df = evaluate_by_interval(gnss_df, radio_df, column, color_func)
+        tooltip_html = f"<b>Zeit:</b> {{timeStr}}<br/><b>{column}:</b> "+"{"+column+"}"
     else:
         gnss_df["color"] = [[255, 0, 0]] * len(gnss_df)
         tooltip_html = "<b>Zeit:</b> {timeStr}"
 
-    # Karte erzeugen
+    # Karte anzeigen
     mid_lat = gnss_df["lat"].mean()
     mid_lon = gnss_df["lon"].mean()
 
