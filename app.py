@@ -64,7 +64,6 @@ gnss_df["timeStamp"] = pd.to_datetime(gnss_df["timeStamp"])
 use_gnss_xaxis = st.checkbox("X-Achse: Strecke statt Zeit", value=False)
 
 # Distanzberechnung mit Anpassung
-
 def compute_gnss_distance_per_fahrt(grouped_df):
     grouped = []
     for src, group in grouped_df.groupby("source"):
@@ -100,7 +99,7 @@ radio_df = radio_df.merge(
     on=["timeStamp", "source"], how="left"
 )
 
-# TL Wert bereinigen (z. B. -071 → 71)
+# TL Wert bereinigen (z. B. -071 → 71)
 if "TL" in radio_df.columns:
     radio_df["TL"] = radio_df["TL"].apply(lambda x: int(str(x)[-2:]) if pd.notnull(x) else None)
 
@@ -122,14 +121,18 @@ for src in radio_df["source"].unique():
     chart_data.append(sub)
 
 combined_df = pd.concat(chart_data)
+
+# Farbmarkierung vorbereiten: nur Punkte mit NaN explizit schwarz machen
+combined_df["valid_point"] = combined_df[selected_metric].notna()
+
 x_axis = alt.X("distance_m:Q", title="Strecke [m]") if use_gnss_xaxis else alt.X("timeStamp:T", title="Zeit")
 layers = []
 
 if show_points:
-    base = alt.Chart(combined_df).mark_circle(size=30).encode(
+    points_layer = alt.Chart(combined_df[combined_df["valid_point"] == True]).mark_circle(size=30).encode(
         x=x_axis,
         y=alt.Y(selected_metric, title=selected_metric),
-        color="source:N",
+        color=alt.Color("source:N", title="Fahrt", scale=alt.Scale(scheme='category10')),
         tooltip=[
             alt.Tooltip("timeStamp:T", title="Zeit", format="%H:%M:%S.%L"),
             alt.Tooltip("lat:Q", title="Latitude"),
@@ -138,11 +141,16 @@ if show_points:
             alt.Tooltip("source:N", title="Quelle")
         ]
     )
-    layers.append(base)
+    black_layer = alt.Chart(combined_df[combined_df["valid_point"] == False]).mark_circle(size=30, color="black").encode(
+        x=x_axis,
+        y=alt.Y(selected_metric, title=selected_metric)
+    )
+    layers.extend([points_layer, black_layer])
 
 if show_avg:
     for src in combined_df["source"].unique():
-        mean_val = combined_df[combined_df["source"] == src][selected_metric].mean()
+        sub = combined_df[combined_df["source"] == src]
+        mean_val = sub[selected_metric].mean()
         rule = alt.Chart(pd.DataFrame({"y": [mean_val]})).mark_rule(
             strokeDash=[4,2], color="gray"
         ).encode(y="y")
@@ -150,7 +158,7 @@ if show_avg:
 
 if show_trend:
     for src in combined_df["source"].unique():
-        trend_data = combined_df[combined_df["source"] == src]
+        trend_data = combined_df[(combined_df["source"] == src) & (combined_df["valid_point"] == True)]
         trend = alt.Chart(trend_data).transform_loess(
             "distance_m" if use_gnss_xaxis else "timeStamp",
             selected_metric,
@@ -158,11 +166,13 @@ if show_trend:
         ).mark_line().encode(
             x=x_axis,
             y=selected_metric,
-            color="source:N"
+            color=alt.Color("source:N", scale=alt.Scale(scheme='category10'), legend=None)
         )
         layers.append(trend)
 
 st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
+
+
 
 # ==================== GNSS Map ====================
 st.subheader("📍 GNSS-Daten auf Karte")
@@ -177,17 +187,15 @@ else:
         "Nur TL anzeigen" if radio_mode == "DAB" else "Nur FS anzeigen"
     ])
 
-    # Sichtbarkeit pro Quelle
-    visible_sources = st.multiselect("Welche Fahrten sollen auf der Karte angezeigt werden?", 
+    visible_sources = st.multiselect("Welche Fahrten sollen angezeigt werden?", 
                                      options=gnss_df["source"].unique().tolist(), 
                                      default=gnss_df["source"].unique().tolist())
 
     gnss_df = gnss_df[gnss_df["source"].isin(visible_sources)].copy()
     radio_df = radio_df[radio_df["source"].isin(visible_sources)].copy()
 
-    # Style-Auswahl
     map_style = st.selectbox("🗺️ Kartenstil", [
-        "streets", "light", "dark", "satellite", "satellite-streets", "outdoors"
+         "satellite","streets", "light", "dark", "satellite-streets", "outdoors"
     ])
     style_dict = {
         "streets": "mapbox://styles/mapbox/streets-v11",
@@ -199,9 +207,8 @@ else:
     }
     map_style_url = style_dict[map_style]
 
-    # Funktionen zur Farbgebung
     def score_to_color(score):
-        if score is None:
+        if score is None or pd.isna(score):
             return [50, 50, 50]
         elif score >= 66:
             return [0, 180, 0]
@@ -211,7 +218,7 @@ else:
             return [255, 50, 50]
 
     def snr_to_color(snr):
-        if snr is None:
+        if snr is None or pd.isna(snr):
             return [50, 50, 50]
         elif snr >= 15:
             return [0, 180, 0]
@@ -221,16 +228,15 @@ else:
             return [255, 50, 50]
 
     def tl_to_color(tl):
-        if tl is None:
+        if tl is None or pd.isna(tl):
             return [50, 50, 50]
-        elif tl >= -70:
+        elif tl >= 71:
             return [0, 180, 0]
-        elif tl >= -85:
+        elif tl >= 60:
             return [255, 200, 0]
         else:
             return [255, 50, 50]
 
-    # Metriken berechnen
     def evaluate_metric(df, radio_df, column, color_func):
         values = []
         radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
@@ -261,7 +267,6 @@ else:
         df["color"] = df["score"].apply(score_to_color)
         return df
 
-    # Tooltip vorbereiten
     gnss_df["timeStr"] = gnss_df["timeStamp"].dt.strftime("%H:%M:%S.%f")
 
     if map_mode == "Signalqualität bewerten (Score)":
@@ -279,7 +284,6 @@ else:
         gnss_df["color"] = [[255, 0, 0]] * len(gnss_df)
         tooltip_html = "<b>Zeit:</b> {timeStr}"
 
-    # PyDeck Layer
     mid_lat = gnss_df["lat"].mean()
     mid_lon = gnss_df["lon"].mean()
 
