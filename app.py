@@ -24,7 +24,7 @@ if use_uploaded:
         entry["source"] = "Upload"
 else:
     available_files = [f for f in os.listdir("data") if f.endswith(".json")]
-    selected_files = st.multiselect("Wähle Datendatei(en) aus", available_files, default=available_files[:1])
+    selected_files = st.multiselect("Wähle Datendatei(en) aus", available_files, default=available_files[:2])
     if not selected_files:
         st.stop()
     raw_data = []
@@ -44,7 +44,6 @@ def filter_entries(data, typ):
     return [e for e in data if e.get("type") == typ]
 
 radio_mode = st.radio("Radiomodus", ["DAB", "FM"], horizontal=True)
-
 radio_data = filter_entries(raw_data, "dab" if radio_mode == "DAB" else "fm")
 gnss_data = filter_entries(raw_data, "gnss")
 
@@ -55,65 +54,72 @@ if radio_df.empty or gnss_df.empty:
     st.warning("Nicht genügend Daten vorhanden.")
     st.stop()
 
-# ==================== Diagramm ====================
-st.subheader("📊 Radiodaten als Diagramm")
-
 radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
 gnss_df["timeStamp"] = pd.to_datetime(gnss_df["timeStamp"])
 
-use_gnss_xaxis = st.checkbox("X-Achse: Strecke statt Zeit", value=False)
+# 🧭 Referenzpunkte
+with st.expander("🧭 Referenzstrecke anpassen"):
+    manual_start = st.text_input("Startpunkt (lat, lon)", value="")
 
-# Distanzberechnung mit Anpassung
-def compute_gnss_distance_per_fahrt(grouped_df):
-    grouped = []
-    for src, group in grouped_df.groupby("source"):
-        group = group.sort_values("timeStamp").reset_index(drop=True)
-        distances = [0]
-        for i in range(1, len(group)):
-            p1 = (group.loc[i-1, "lat"], group.loc[i-1, "lon"])
-            p2 = (group.loc[i, "lat"], group.loc[i, "lon"])
-            d = geodesic(p1, p2).meters
-            distances.append(distances[-1] + d)
-        group["distance_local"] = distances
-        grouped.append(group)
+# Automatische Auswahl eines Referenzpunkts falls leer
+if manual_start:
+    ref_start = tuple(map(float, manual_start.split(",")))
+else:
+    shortest = gnss_df.groupby("source").size().idxmin()
+    ref_start = gnss_df[gnss_df["source"] == shortest].iloc[0][["lat", "lon"]].values
 
-    combined = pd.concat(grouped)
-    min_starts = {src: group["distance_local"].min() for src, group in combined.groupby("source")}
-    global_offset = min(min_starts.values())
+# 🕒 Timestamp pro Fahrt, der dem Referenzpunkt am nächsten ist
+def get_start_timestamp_near_ref(gnss_df, source, ref_point):
+    df = gnss_df[gnss_df["source"] == source].copy()
+    df["distance_to_ref"] = df.apply(lambda row: geodesic((row["lat"], row["lon"]), ref_point).meters, axis=1)
+    nearest = df.loc[df["distance_to_ref"].idxmin()]
+    return nearest["timeStamp"]
 
-    combined["distance_m"] = combined.apply(
-        lambda row: row["distance_local"] + (min_starts[row["source"]] - global_offset), axis=1
-    )
-    return combined
+# Start-Timestamps für beide Fahrten ermitteln
+start_times = {}
+for src in radio_df["source"].unique():
+    gnss_time = get_start_timestamp_near_ref(gnss_df, src, ref_start)
+    sub_radio = radio_df[radio_df["source"] == src]
+    radio_after_gnss = sub_radio[sub_radio["timeStamp"] >= gnss_time]
+    if not radio_after_gnss.empty:
+        radio_start = radio_after_gnss.iloc[0]["timeStamp"]
+    else:
+        radio_start = sub_radio.iloc[0]["timeStamp"]
+    start_times[src] = radio_start
 
-gnss_df = compute_gnss_distance_per_fahrt(gnss_df)
+# Fahrt 1 = die mit früherem Start, Fahrt 2 = spätere
+sorted_sources = sorted(start_times, key=lambda k: start_times[k])
+src1, src2 = sorted_sources[0], sorted_sources[1]
+start1, start2 = start_times[src1], start_times[src2]
 
-def find_nearest_distance(row):
-    subset = gnss_df[gnss_df["source"] == row["source"]]
-    nearest_idx = (subset["timeStamp"] - row["timeStamp"]).abs().idxmin()
-    return subset.loc[nearest_idx, "distance_m"]
+# Aufteilen
+fahrt1_df = radio_df[(radio_df["source"] == src1) & (radio_df["timeStamp"] >= start1) & (radio_df["timeStamp"] < start2)].copy()
+fahrt2_df = radio_df[(radio_df["source"] == src2) & (radio_df["timeStamp"] >= start2)].copy()
 
-radio_df["distance_m"] = radio_df.apply(find_nearest_distance, axis=1)
-radio_df = radio_df.merge(
-    gnss_df[["timeStamp", "source", "lat", "lon"]],
-    on=["timeStamp", "source"], how="left"
-)
-
-# TL Wert bereinigen (z. B. -071 → 71)
+# TL Wert bereinigen (z. B. -071 → 71)
 if "TL" in radio_df.columns:
     radio_df["TL"] = radio_df["TL"].apply(lambda x: int(str(x)[-2:]) if pd.notnull(x) else None)
+    fahrt1_df["TL"] = fahrt1_df["TL"].apply(lambda x: int(str(x)[-2:]) if pd.notnull(x) else None)
+    fahrt2_df["TL"] = fahrt2_df["TL"].apply(lambda x: int(str(x)[-2:]) if pd.notnull(x) else None)
+
+# Zeit normieren (für beide Fahrten)
+fahrt1_df["time_rel"] = (fahrt1_df["timeStamp"] - start1).dt.total_seconds()
+fahrt2_df["time_rel"] = (fahrt2_df["timeStamp"] - start2).dt.total_seconds()
+
+# === Diagramm ===
+st.subheader("📊 Vergleichsdiagramm der Fahrten")
 
 metric_cols = ["SNR", "TL"] if radio_mode == "DAB" else ["SNR", "FS"]
 selected_metric = st.selectbox("Welche Metrik möchtest du anzeigen?", metric_cols)
+
 resample = st.selectbox("Zeitintervall (für Mittelwert)", ["Original", "1s", "5s", "10s"])
 show_points = st.checkbox("Punkte anzeigen", value=True)
 show_avg = st.checkbox("Durchschnitt anzeigen")
 show_trend = st.checkbox("Tendenzlinien anzeigen")
 
 chart_data = []
-for src in radio_df["source"].unique():
-    sub = radio_df[radio_df["source"] == src].copy()
-    sub = sub.set_index("timeStamp")[[selected_metric, "distance_m", "lat", "lon"]]
+for df, src in zip([fahrt1_df, fahrt2_df], [src1, src2]):
+    sub = df.set_index("timeStamp")[[selected_metric, "time_rel"]]
     if resample != "Original":
         sub = sub.resample(resample).mean().dropna()
     sub["source"] = src
@@ -121,58 +127,42 @@ for src in radio_df["source"].unique():
     chart_data.append(sub)
 
 combined_df = pd.concat(chart_data)
-
-# Farbmarkierung vorbereiten: nur Punkte mit NaN explizit schwarz machen
-combined_df["valid_point"] = combined_df[selected_metric].notna()
-
-x_axis = alt.X("distance_m:Q", title="Strecke [m]") if use_gnss_xaxis else alt.X("timeStamp:T", title="Zeit")
+x_axis = alt.X("time_rel:Q", title="Zeit seit Referenzpunkt [s]")
 layers = []
 
 if show_points:
-    points_layer = alt.Chart(combined_df[combined_df["valid_point"] == True]).mark_circle(size=30).encode(
+    base = alt.Chart(combined_df).mark_circle(size=30).encode(
         x=x_axis,
         y=alt.Y(selected_metric, title=selected_metric),
-        color=alt.Color("source:N", title="Fahrt", scale=alt.Scale(scheme='category10')),
+        color=alt.Color("source:N", title="Fahrt"),
         tooltip=[
             alt.Tooltip("timeStamp:T", title="Zeit", format="%H:%M:%S.%L"),
-            alt.Tooltip("lat:Q", title="Latitude"),
-            alt.Tooltip("lon:Q", title="Longitude"),
             alt.Tooltip(f"{selected_metric}:Q", title=selected_metric),
-            alt.Tooltip("source:N", title="Quelle")
+            alt.Tooltip("source:N", title="Fahrt")
         ]
     )
-    black_layer = alt.Chart(combined_df[combined_df["valid_point"] == False]).mark_circle(size=30, color="black").encode(
-        x=x_axis,
-        y=alt.Y(selected_metric, title=selected_metric)
-    )
-    layers.extend([points_layer, black_layer])
+    layers.append(base)
 
 if show_avg:
-    for src in combined_df["source"].unique():
-        sub = combined_df[combined_df["source"] == src]
-        mean_val = sub[selected_metric].mean()
+    for src in [src1, src2]:
+        mean_val = combined_df[combined_df["source"] == src][selected_metric].mean()
         rule = alt.Chart(pd.DataFrame({"y": [mean_val]})).mark_rule(
             strokeDash=[4,2], color="gray"
         ).encode(y="y")
         layers.append(rule)
 
 if show_trend:
-    for src in combined_df["source"].unique():
-        trend_data = combined_df[(combined_df["source"] == src) & (combined_df["valid_point"] == True)]
+    for src in [src1, src2]:
+        trend_data = combined_df[combined_df["source"] == src]
         trend = alt.Chart(trend_data).transform_loess(
-            "distance_m" if use_gnss_xaxis else "timeStamp",
-            selected_metric,
-            bandwidth=0.3
+            "time_rel", selected_metric, bandwidth=0.3
         ).mark_line().encode(
-            x=x_axis,
-            y=selected_metric,
-            color=alt.Color("source:N", scale=alt.Scale(scheme='category10'), legend=None)
+            x=x_axis, y=selected_metric,
+            color=alt.Color("source:N", legend=None)
         )
         layers.append(trend)
 
 st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
-
-
 
 # ==================== GNSS Map ====================
 st.subheader("📍 GNSS-Daten auf Karte")
