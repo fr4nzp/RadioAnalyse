@@ -57,25 +57,16 @@ if radio_df.empty or gnss_df.empty:
 radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
 gnss_df["timeStamp"] = pd.to_datetime(gnss_df["timeStamp"])
 
-# 🧭 Referenzpunkte
-with st.expander("🧭 Referenzstrecke anpassen"):
-    manual_start = st.text_input("Startpunkt (lat, lon)", value="")
+# Automatische Auswahl eines Referenzpunkts
+shortest = gnss_df.groupby("source").size().idxmin()
+ref_start = gnss_df[gnss_df["source"] == shortest].iloc[0][["lat", "lon"]].values
 
-# Automatische Auswahl eines Referenzpunkts falls leer
-if manual_start:
-    ref_start = tuple(map(float, manual_start.split(",")))
-else:
-    shortest = gnss_df.groupby("source").size().idxmin()
-    ref_start = gnss_df[gnss_df["source"] == shortest].iloc[0][["lat", "lon"]].values
-
-# 🕒 Timestamp pro Fahrt, der dem Referenzpunkt am nächsten ist
 def get_start_timestamp_near_ref(gnss_df, source, ref_point):
     df = gnss_df[gnss_df["source"] == source].copy()
     df["distance_to_ref"] = df.apply(lambda row: geodesic((row["lat"], row["lon"]), ref_point).meters, axis=1)
     nearest = df.loc[df["distance_to_ref"].idxmin()]
     return nearest["timeStamp"]
 
-# Start-Timestamps für beide Fahrten ermitteln
 start_times = {}
 for src in radio_df["source"].unique():
     gnss_time = get_start_timestamp_near_ref(gnss_df, src, ref_start)
@@ -87,22 +78,18 @@ for src in radio_df["source"].unique():
         radio_start = sub_radio.iloc[0]["timeStamp"]
     start_times[src] = radio_start
 
-# Fahrt 1 = die mit früherem Start, Fahrt 2 = spätere
 sorted_sources = sorted(start_times, key=lambda k: start_times[k])
 src1, src2 = sorted_sources[0], sorted_sources[1]
 start1, start2 = start_times[src1], start_times[src2]
 
-# Aufteilen
 fahrt1_df = radio_df[(radio_df["source"] == src1) & (radio_df["timeStamp"] >= start1) & (radio_df["timeStamp"] < start2)].copy()
 fahrt2_df = radio_df[(radio_df["source"] == src2) & (radio_df["timeStamp"] >= start2)].copy()
 
-# TL Wert bereinigen (z. B. -071 → 71)
 if "TL" in radio_df.columns:
     radio_df["TL"] = radio_df["TL"].apply(lambda x: int(str(x)[-2:]) if pd.notnull(x) else None)
     fahrt1_df["TL"] = fahrt1_df["TL"].apply(lambda x: int(str(x)[-2:]) if pd.notnull(x) else None)
     fahrt2_df["TL"] = fahrt2_df["TL"].apply(lambda x: int(str(x)[-2:]) if pd.notnull(x) else None)
 
-# Zeit normieren (für beide Fahrten)
 fahrt1_df["time_rel"] = (fahrt1_df["timeStamp"] - start1).dt.total_seconds()
 fahrt2_df["time_rel"] = (fahrt2_df["timeStamp"] - start2).dt.total_seconds()
 
@@ -147,22 +134,30 @@ if show_avg:
     for src in [src1, src2]:
         mean_val = combined_df[combined_df["source"] == src][selected_metric].mean()
         rule = alt.Chart(pd.DataFrame({"y": [mean_val]})).mark_rule(
-            strokeDash=[4,2], color="gray"
+            strokeDash=[4, 2], color="gray"
         ).encode(y="y")
         layers.append(rule)
 
 if show_trend:
     for src in [src1, src2]:
         trend_data = combined_df[combined_df["source"] == src]
-        trend = alt.Chart(trend_data).transform_loess(
-            "time_rel", selected_metric, bandwidth=0.3
-        ).mark_line().encode(
-            x=x_axis, y=selected_metric,
-            color=alt.Color("source:N", legend=None)
-        )
-        layers.append(trend)
+        if len(trend_data) >= 3:
+            trend = alt.Chart(trend_data).transform_loess(
+                "time_rel", selected_metric, bandwidth=0.3, groupby=["source"]
+            ).mark_line().encode(
+                x=x_axis,
+                y=selected_metric,
+                color=alt.Color("source:N", legend=None),
+                tooltip=[
+                    alt.Tooltip("source:N", title="Fahrt"),
+                    alt.Tooltip("time_rel:Q", title="Zeit [s]"),
+                    alt.Tooltip(f"{selected_metric}:Q", title=selected_metric)
+                ]
+            )
+            layers.append(trend)
 
 st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
+
 
 # ==================== GNSS Map ====================
 st.subheader("📍 GNSS-Daten auf Karte")
