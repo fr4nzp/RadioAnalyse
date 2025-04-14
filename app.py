@@ -96,8 +96,13 @@ fahrt2_df["time_rel"] = (fahrt2_df["timeStamp"] - start2).dt.total_seconds()
 # === Diagramm ===
 st.subheader("📊 Vergleichsdiagramm der Fahrten")
 
-metric_cols = ["SNR", "TL"] if radio_mode == "DAB" else ["SNR", "FS"]
-selected_metric = st.selectbox("Welche Metrik möchtest du anzeigen?", metric_cols)
+if radio_mode == "DAB":
+    selected_metric = "TL"
+    st.markdown("**Angezeigte Metrik:** `TL` (Transmission Level)")
+else:
+    selected_metric = "FS"
+    st.markdown("**Angezeigte Metrik:** `FS` (Field Strength)")
+
 
 resample = st.selectbox("Zeitintervall (für Mittelwert)", ["Original", "1s", "5s", "10s"])
 show_points = st.checkbox("Punkte anzeigen", value=True)
