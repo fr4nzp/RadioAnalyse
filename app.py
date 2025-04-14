@@ -85,30 +85,26 @@ start1, start2 = start_times[src1], start_times[src2]
 fahrt1_df = radio_df[(radio_df["source"] == src1) & (radio_df["timeStamp"] >= start1) & (radio_df["timeStamp"] < start2)].copy()
 fahrt2_df = radio_df[(radio_df["source"] == src2) & (radio_df["timeStamp"] >= start2)].copy()
 
-if "TL" in radio_df.columns:
-    radio_df["TL"] = radio_df["TL"].apply(lambda x: int(str(x)[-2:]) if pd.notnull(x) else None)
-    fahrt1_df["TL"] = fahrt1_df["TL"].apply(lambda x: int(str(x)[-2:]) if pd.notnull(x) else None)
-    fahrt2_df["TL"] = fahrt2_df["TL"].apply(lambda x: int(str(x)[-2:]) if pd.notnull(x) else None)
-
 fahrt1_df["time_rel"] = (fahrt1_df["timeStamp"] - start1).dt.total_seconds()
 fahrt2_df["time_rel"] = (fahrt2_df["timeStamp"] - start2).dt.total_seconds()
 
 # === Diagramm ===
 st.subheader("📊 Vergleichsdiagramm der Fahrten")
 
+# Metrik automatisch setzen je nach Radiomodus
 if radio_mode == "DAB":
     selected_metric = "TL"
-    st.markdown("**Angezeigte Metrik:** `TL` (Transmission Level)")
+    st.markdown("**Angezeigte Metrik:** `TL` (Transmission Level in dBm)")
 else:
     selected_metric = "FS"
     st.markdown("**Angezeigte Metrik:** `FS` (Field Strength)")
-
 
 resample = st.selectbox("Zeitintervall (für Mittelwert)", ["Original", "1s", "5s", "10s"])
 show_points = st.checkbox("Punkte anzeigen", value=True)
 show_avg = st.checkbox("Durchschnitt anzeigen")
 show_trend = st.checkbox("Tendenzlinien anzeigen")
 
+# Daten vorbereiten
 chart_data = []
 for df, src in zip([fahrt1_df, fahrt2_df], [src1, src2]):
     sub = df.set_index("timeStamp")[[selected_metric, "time_rel"]]
@@ -120,12 +116,24 @@ for df, src in zip([fahrt1_df, fahrt2_df], [src1, src2]):
 
 combined_df = pd.concat(chart_data)
 x_axis = alt.X("time_rel:Q", title="Zeit seit Referenzpunkt [s]")
+
+# Y-Achse dynamisch anpassen bei TL (für DAB)
+if selected_metric == "TL":
+    min_val = combined_df[selected_metric].min()
+    max_val = combined_df[selected_metric].max()
+    y_min = min(-100, min_val)
+    y_max = max(0, max_val)
+    y_axis = alt.Y(selected_metric, title="TL (dBm)", scale=alt.Scale(domain=(y_min, y_max)))
+else:
+    y_axis = alt.Y(selected_metric, title=selected_metric)
+
 layers = []
 
+# Punktdiagramm
 if show_points:
     base = alt.Chart(combined_df).mark_circle(size=30).encode(
         x=x_axis,
-        y=alt.Y(selected_metric, title=selected_metric),
+        y=y_axis,
         color=alt.Color("source:N", title="Fahrt"),
         tooltip=[
             alt.Tooltip("timeStamp:T", title="Zeit", format="%H:%M:%S.%L"),
@@ -135,6 +143,7 @@ if show_points:
     )
     layers.append(base)
 
+# Durchschnittslinie
 if show_avg:
     for src in [src1, src2]:
         mean_val = combined_df[combined_df["source"] == src][selected_metric].mean()
@@ -143,6 +152,7 @@ if show_avg:
         ).encode(y="y")
         layers.append(rule)
 
+# Tendenzlinie (Loess)
 if show_trend:
     for src in [src1, src2]:
         trend_data = combined_df[combined_df["source"] == src]
@@ -151,7 +161,7 @@ if show_trend:
                 "time_rel", selected_metric, bandwidth=0.3, groupby=["source"]
             ).mark_line().encode(
                 x=x_axis,
-                y=selected_metric,
+                y=y_axis,
                 color=alt.Color("source:N", legend=None),
                 tooltip=[
                     alt.Tooltip("source:N", title="Fahrt"),
@@ -161,8 +171,8 @@ if show_trend:
             )
             layers.append(trend)
 
+# Chart anzeigen
 st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
-
 
 # ==================== GNSS Map ====================
 st.subheader("📍 GNSS-Daten auf Karte")
