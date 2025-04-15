@@ -130,7 +130,7 @@ else:
 st.markdown(f"**Angezeigte Metrik:** `{selected_title}`")
 
 # Optionen
-resample = st.selectbox("Zeitintervall (für Mittelwert)", ["Original", "1s", "5s", "10s"])
+resample = st.selectbox("Zeitintervall (für Mittelwert)", ["Original", "1s", "5s", "10s"], index=2)
 show_points = st.checkbox("Punkte anzeigen", value=True)
 show_avg = st.checkbox("Durchschnitt anzeigen")
 show_trend = st.checkbox("Tendenzlinien anzeigen")
