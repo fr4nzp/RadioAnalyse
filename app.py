@@ -67,6 +67,7 @@ def get_start_timestamp_near_ref(gnss_df, source, ref_point):
     nearest = df.loc[df["distance_to_ref"].idxmin()]
     return nearest["timeStamp"]
 
+# === Start-Zeitpunkte ermitteln ===
 start_times = {}
 for src in radio_df["source"].unique():
     gnss_time = get_start_timestamp_near_ref(gnss_df, src, ref_start)
@@ -78,15 +79,30 @@ for src in radio_df["source"].unique():
         radio_start = sub_radio.iloc[0]["timeStamp"]
     start_times[src] = radio_start
 
+# === Robust sortieren und Fahrten zuweisen ===
 sorted_sources = sorted(start_times, key=lambda k: start_times[k])
-src1, src2 = sorted_sources[0], sorted_sources[1]
-start1, start2 = start_times[src1], start_times[src2]
 
-fahrt1_df = radio_df[(radio_df["source"] == src1) & (radio_df["timeStamp"] >= start1) & (radio_df["timeStamp"] < start2)].copy()
-fahrt2_df = radio_df[(radio_df["source"] == src2) & (radio_df["timeStamp"] >= start2)].copy()
+if len(sorted_sources) >= 2:
+    src1, src2 = sorted_sources[0], sorted_sources[1]
+    start1, start2 = start_times[src1], start_times[src2]
 
+    fahrt1_df = radio_df[(radio_df["source"] == src1) & (radio_df["timeStamp"] >= start1) & (radio_df["timeStamp"] < start2)].copy()
+    fahrt2_df = radio_df[(radio_df["source"] == src2) & (radio_df["timeStamp"] >= start2)].copy()
+elif len(sorted_sources) == 1:
+    src1 = sorted_sources[0]
+    start1 = start_times[src1]
+
+    fahrt1_df = radio_df[(radio_df["source"] == src1) & (radio_df["timeStamp"] >= start1)].copy()
+    fahrt2_df = pd.DataFrame()  # leer lassen
+else:
+    st.warning("Keine gültigen Fahrten vorhanden.")
+    st.stop()
+
+# Zeit normieren
 fahrt1_df["time_rel"] = (fahrt1_df["timeStamp"] - start1).dt.total_seconds()
-fahrt2_df["time_rel"] = (fahrt2_df["timeStamp"] - start2).dt.total_seconds()
+if not fahrt2_df.empty:
+    fahrt2_df["time_rel"] = (fahrt2_df["timeStamp"] - start2).dt.total_seconds()
+
 
 # === Diagramm ===
 st.subheader("📊 Vergleichsdiagramm der Fahrten")
@@ -122,7 +138,12 @@ show_reference = st.checkbox("Referenzbereiche anzeigen")
 
 # Daten vorbereiten
 chart_data = []
-for df, src in zip([fahrt1_df, fahrt2_df], [src1, src2]):
+
+data_sources = [(fahrt1_df, src1)]
+if not fahrt2_df.empty:
+    data_sources.append((fahrt2_df, src2))
+
+for df, src in data_sources:
     sub = df.set_index("timeStamp")[[selected_metric, "time_rel"]]
     if resample != "Original":
         sub = sub.resample(resample).mean().dropna()
@@ -131,9 +152,10 @@ for df, src in zip([fahrt1_df, fahrt2_df], [src1, src2]):
     chart_data.append(sub)
 
 combined_df = pd.concat(chart_data)
+
+# === Achsen vorbereiten
 x_axis = alt.X("time_rel:Q", title="Zeit seit Referenzpunkt [s]")
 
-# Y-Achse dynamisch nur für TL
 if selected_metric == "TL":
     min_val = combined_df[selected_metric].min()
     max_val = combined_df[selected_metric].max()
@@ -143,12 +165,15 @@ if selected_metric == "TL":
 else:
     y_axis = alt.Y(selected_metric, title=selected_title)
 
+# === Diagrammlayer aufbauen
 layers = []
 
 # Referenzbereiche als Hintergrund
 if show_reference:
-    x_min = combined_df["time_rel"].min()
-    x_max = combined_df["time_rel"].max()
+    padding = 10  # Sekunden Puffer
+    x_min = combined_df["time_rel"].min() - padding
+    x_max = combined_df["time_rel"].max() + padding
+
     for ref in reference_ranges:
         rect = alt.Chart(pd.DataFrame({
             "y_min": [ref["min"]],
@@ -163,7 +188,7 @@ if show_reference:
         )
         layers.append(rect)
 
-# Punkte
+# Punktdarstellung
 if show_points:
     base = alt.Chart(combined_df).mark_circle(size=30).encode(
         x=x_axis,
@@ -177,18 +202,18 @@ if show_points:
     )
     layers.append(base)
 
-# Durchschnitt
+# Durchschnittslinien
 if show_avg:
-    for src in [src1, src2]:
+    for src in combined_df["source"].unique():
         mean_val = combined_df[combined_df["source"] == src][selected_metric].mean()
         rule = alt.Chart(pd.DataFrame({"y": [mean_val]})).mark_rule(
             strokeDash=[4, 2], color="gray"
         ).encode(y="y")
         layers.append(rule)
 
-# Tendenzlinie
+# Tendenzlinien (Loess)
 if show_trend:
-    for src in [src1, src2]:
+    for src in combined_df["source"].unique():
         trend_data = combined_df[combined_df["source"] == src]
         if len(trend_data) >= 3:
             trend = alt.Chart(trend_data).transform_loess(
@@ -205,8 +230,9 @@ if show_trend:
             )
             layers.append(trend)
 
-# Anzeige
+# Diagramm anzeigen
 st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
+
 
 # ==================== GNSS Map ====================
 st.subheader("📍 GNSS-Daten auf Karte")
@@ -214,13 +240,6 @@ st.subheader("📍 GNSS-Daten auf Karte")
 if gnss_df.empty:
     st.warning("Keine GNSS-Daten vorhanden.")
 else:
-    map_mode = st.selectbox("Darstellungsmodus", [
-        "Standardpunkte", 
-        "Signalqualität bewerten (Score)", 
-        "Nur SNR anzeigen", 
-        "Nur TL anzeigen" if radio_mode == "DAB" else "Nur FS anzeigen"
-    ])
-
     visible_sources = st.multiselect("Welche Fahrten sollen angezeigt werden?", 
                                      options=gnss_df["source"].unique().tolist(), 
                                      default=gnss_df["source"].unique().tolist())
@@ -242,39 +261,30 @@ else:
     }
     map_style_url = style_dict[map_style]
 
-    def snr_to_color(snr):
-        if pd.isna(snr): return [50, 50, 50]
-        elif snr >= 15: return [0, 180, 0]
-        elif snr >= 8: return [255, 200, 0]
-        else: return [255, 50, 50]
+    def color_dab_tl(val):
+        if pd.isna(val): return [255, 255, 255]
+        elif val > -40: return [0, 180, 0]
+        elif val > -60: return [160, 220, 100]
+        elif val > -80: return [255, 220, 0]
+        else: return [255, 70, 70]
 
-    def tl_to_color(tl):
-        if pd.isna(tl): return [50, 50, 50]
-        elif tl >= 70: return [0, 180, 0]
-        elif tl >= 50: return [255, 200, 0]
-        else: return [255, 50, 50]
+    def color_fm_fs(val):
+        if pd.isna(val): return [255, 255, 255]
+        elif val > 60: return [0, 180, 0]
+        elif val > 40: return [160, 220, 100]
+        elif val > 20: return [255, 220, 0]
+        else: return [255, 70, 70]
 
-    def score_to_color(score):
-        if pd.isna(score): return [50, 50, 50]
-        elif score >= 66: return [0, 180, 0]
-        elif score >= 33: return [255, 200, 0]
-        else: return [255, 50, 50]
-
-    gnss_df["timeStamp"] = pd.to_datetime(gnss_df["timeStamp"])
-    radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
-    gnss_df["timeStr"] = gnss_df["timeStamp"].dt.strftime("%H:%M:%S.%f")
-
-    # Neue Logik: Mittelwert aus Zeitbereich GNSS_prev -> GNSS_now
-    def evaluate_by_interval(df, radio_df, column, color_func):
+    def evaluate_color_interval(df, radio_df, column, color_func):
         df = df.sort_values("timeStamp").reset_index(drop=True)
-        result_vals = []
-        result_colors = []
+        values = []
+        colors = []
 
         for idx in range(len(df)):
             curr_row = df.iloc[idx]
             if idx == 0:
-                result_vals.append(None)
-                result_colors.append([50, 50, 50])
+                values.append(None)
+                colors.append([255, 255, 255])
                 continue
             prev_time = df.iloc[idx - 1]["timeStamp"]
             curr_time = curr_row["timeStamp"]
@@ -286,66 +296,27 @@ else:
             ]
 
             val = subset[column].mean() if not subset.empty else None
-            result_vals.append(val)
-            result_colors.append(color_func(val) if pd.notna(val) else [50, 50, 50])
+            values.append(val)
+            colors.append(color_func(val))
 
-        df[column] = result_vals
-        df["color"] = result_colors
-        return df
-
-    def evaluate_score_interval(df, radio_df):
-        df = df.sort_values("timeStamp").reset_index(drop=True)
-        scores = []
-        colors = []
-
-        for idx in range(len(df)):
-            curr_row = df.iloc[idx]
-            if idx == 0:
-                scores.append(None)
-                colors.append([50, 50, 50])
-                continue
-            prev_time = df.iloc[idx - 1]["timeStamp"]
-            curr_time = curr_row["timeStamp"]
-
-            subset = radio_df[
-                (radio_df["source"] == curr_row["source"]) &
-                (radio_df["timeStamp"] > prev_time) &
-                (radio_df["timeStamp"] <= curr_time)
-            ]
-
-            if subset.empty:
-                scores.append(None)
-                colors.append([50, 50, 50])
-            else:
-                snr = subset["SNR"].mean() if "SNR" in subset.columns else None
-                tl = subset["TL"].mean() if "TL" in subset.columns else None
-                snr_score = min(snr / 20, 1) * 100 if pd.notnull(snr) else 0
-                tl_score = min(max((tl + 100) / 30, 0), 1) * 100 if pd.notnull(tl) else 0
-                score = 0.5 * snr_score + 0.5 * tl_score
-                scores.append(score)
-                colors.append(score_to_color(score))
-
-        df["score"] = scores
+        df[column] = values
         df["color"] = colors
         return df
 
-    # Map Mode
-    if map_mode == "Signalqualität bewerten (Score)":
-        gnss_df = evaluate_score_interval(gnss_df, radio_df)
-        tooltip_html = "<b>Zeit:</b> {timeStr}<br/><b>Score:</b> {score:.1f}"
-    elif map_mode == "Nur SNR anzeigen":
-        gnss_df = evaluate_by_interval(gnss_df, radio_df, "SNR", snr_to_color)
-        tooltip_html = "<b>Zeit:</b> {timeStr}<br/><b>SNR:</b> {SNR}"
-    elif map_mode == "Nur TL anzeigen" or map_mode == "Nur FS anzeigen":
-        column = "TL" if "TL" in radio_df.columns else "FS"
-        color_func = tl_to_color if column == "TL" else snr_to_color
-        gnss_df = evaluate_by_interval(gnss_df, radio_df, column, color_func)
-        tooltip_html = f"<b>Zeit:</b> {{timeStr}}<br/><b>{column}:</b> "+"{"+column+"}"
-    else:
-        gnss_df["color"] = [[255, 0, 0]] * len(gnss_df)
-        tooltip_html = "<b>Zeit:</b> {timeStr}"
+    # GNSS vorbereiten
+    gnss_df["timeStamp"] = pd.to_datetime(gnss_df["timeStamp"])
+    radio_df["timeStamp"] = pd.to_datetime(radio_df["timeStamp"])
+    gnss_df["timeStr"] = gnss_df["timeStamp"].dt.strftime("%H:%M:%S.%f")
 
-    # Karte anzeigen
+    # Modusspezifisch verarbeiten
+    if radio_mode == "DAB":
+        gnss_df = evaluate_color_interval(gnss_df, radio_df, "TL", color_dab_tl)
+        tooltip_html = "<b>Zeit:</b> {timeStr}<br/><b>TL:</b> {TL}"
+    else:
+        gnss_df = evaluate_color_interval(gnss_df, radio_df, "FS", color_fm_fs)
+        tooltip_html = "<b>Zeit:</b> {timeStr}<br/><b>FS:</b> {FS}"
+
+    # Karte rendern
     mid_lat = gnss_df["lat"].mean()
     mid_lon = gnss_df["lon"].mean()
 
