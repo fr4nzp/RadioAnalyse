@@ -91,18 +91,34 @@ fahrt2_df["time_rel"] = (fahrt2_df["timeStamp"] - start2).dt.total_seconds()
 # === Diagramm ===
 st.subheader("📊 Vergleichsdiagramm der Fahrten")
 
-# Metrik automatisch setzen je nach Radiomodus
+# Metrik & Referenzbereiche je nach Radiomodus
 if radio_mode == "DAB":
     selected_metric = "TL"
-    st.markdown("**Angezeigte Metrik:** `TL` (Transmission Level in dBm)")
+    selected_title = "TL (dBm)"
+    reference_ranges = [
+        {"label": "Sehr gut", "min": -40, "max": 40, "color": "#c8facc"},
+        {"label": "Gut", "min": -60, "max": -40, "color": "#a4e2a0"},
+        {"label": "Mittel", "min": -80, "max": -60, "color": "#ffe59d"},
+        {"label": "Schlecht", "min": -120, "max": -80, "color": "#f7c2c2"},
+    ]
 else:
     selected_metric = "FS"
-    st.markdown("**Angezeigte Metrik:** `FS` (Field Strength)")
+    selected_title = "FS (dBμV)"
+    reference_ranges = [
+        {"label": "Sehr gut", "min": 60, "max": 120, "color": "#c8facc"},
+        {"label": "Gut", "min": 40, "max": 60, "color": "#a4e2a0"},
+        {"label": "Mittel", "min": 20, "max": 40, "color": "#ffe59d"},
+        {"label": "Schlecht", "min": -20, "max": 20, "color": "#f7c2c2"},
+    ]
 
+st.markdown(f"**Angezeigte Metrik:** `{selected_title}`")
+
+# Optionen
 resample = st.selectbox("Zeitintervall (für Mittelwert)", ["Original", "1s", "5s", "10s"])
 show_points = st.checkbox("Punkte anzeigen", value=True)
 show_avg = st.checkbox("Durchschnitt anzeigen")
 show_trend = st.checkbox("Tendenzlinien anzeigen")
+show_reference = st.checkbox("Referenzbereiche anzeigen")
 
 # Daten vorbereiten
 chart_data = []
@@ -117,19 +133,37 @@ for df, src in zip([fahrt1_df, fahrt2_df], [src1, src2]):
 combined_df = pd.concat(chart_data)
 x_axis = alt.X("time_rel:Q", title="Zeit seit Referenzpunkt [s]")
 
-# Y-Achse dynamisch anpassen bei TL (für DAB)
+# Y-Achse dynamisch nur für TL
 if selected_metric == "TL":
     min_val = combined_df[selected_metric].min()
     max_val = combined_df[selected_metric].max()
     y_min = min(-100, min_val)
     y_max = max(0, max_val)
-    y_axis = alt.Y(selected_metric, title="TL (dBm)", scale=alt.Scale(domain=(y_min, y_max)))
+    y_axis = alt.Y(selected_metric, title=selected_title, scale=alt.Scale(domain=(y_min, y_max)))
 else:
-    y_axis = alt.Y(selected_metric, title=selected_metric)
+    y_axis = alt.Y(selected_metric, title=selected_title)
 
 layers = []
 
-# Punktdiagramm
+# Referenzbereiche als Hintergrund
+if show_reference:
+    x_min = combined_df["time_rel"].min()
+    x_max = combined_df["time_rel"].max()
+    for ref in reference_ranges:
+        rect = alt.Chart(pd.DataFrame({
+            "y_min": [ref["min"]],
+            "y_max": [ref["max"]],
+            "x_min": [x_min],
+            "x_max": [x_max]
+        })).mark_rect(opacity=0.2, color=ref["color"]).encode(
+            x="x_min:Q",
+            x2="x_max:Q",
+            y="y_min:Q",
+            y2="y_max:Q"
+        )
+        layers.append(rect)
+
+# Punkte
 if show_points:
     base = alt.Chart(combined_df).mark_circle(size=30).encode(
         x=x_axis,
@@ -137,13 +171,13 @@ if show_points:
         color=alt.Color("source:N", title="Fahrt"),
         tooltip=[
             alt.Tooltip("timeStamp:T", title="Zeit", format="%H:%M:%S.%L"),
-            alt.Tooltip(f"{selected_metric}:Q", title=selected_metric),
+            alt.Tooltip(f"{selected_metric}:Q", title=selected_title),
             alt.Tooltip("source:N", title="Fahrt")
         ]
     )
     layers.append(base)
 
-# Durchschnittslinie
+# Durchschnitt
 if show_avg:
     for src in [src1, src2]:
         mean_val = combined_df[combined_df["source"] == src][selected_metric].mean()
@@ -152,7 +186,7 @@ if show_avg:
         ).encode(y="y")
         layers.append(rule)
 
-# Tendenzlinie (Loess)
+# Tendenzlinie
 if show_trend:
     for src in [src1, src2]:
         trend_data = combined_df[combined_df["source"] == src]
@@ -166,12 +200,12 @@ if show_trend:
                 tooltip=[
                     alt.Tooltip("source:N", title="Fahrt"),
                     alt.Tooltip("time_rel:Q", title="Zeit [s]"),
-                    alt.Tooltip(f"{selected_metric}:Q", title=selected_metric)
+                    alt.Tooltip(f"{selected_metric}:Q", title=selected_title)
                 ]
             )
             layers.append(trend)
 
-# Chart anzeigen
+# Anzeige
 st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
 
 # ==================== GNSS Map ====================
