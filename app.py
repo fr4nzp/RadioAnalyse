@@ -50,6 +50,19 @@ gnss_data = filter_entries(raw_data, "gnss")
 radio_df = pd.DataFrame(radio_data)
 gnss_df = pd.DataFrame(gnss_data)
 
+# Frequenzfilter bei DAB
+if radio_mode == "DAB" and "F_kHz" in radio_df.columns:
+    freq_counts = radio_df["F_kHz"].value_counts().sort_index()
+    freq_options = [f"{freq} ({count})" for freq, count in freq_counts.items()]
+    freq_map = dict(zip(freq_options, freq_counts.index))  # Mapping zurück zur Zahl
+
+    if len(freq_options) > 1:
+        st.markdown("💡 *Mehrere Sender erkannt – wähle einen zur gezielten Analyse:*")
+        selected_label = st.selectbox("🎚️ Zeige nur Sender mit Frequenz (kHz):", freq_options)
+        selected_freq = freq_map[selected_label]
+        radio_df = radio_df[radio_df["F_kHz"] == selected_freq]
+
+
 if radio_df.empty or gnss_df.empty:
     st.warning("Nicht genügend Daten vorhanden.")
     st.stop()
