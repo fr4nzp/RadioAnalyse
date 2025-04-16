@@ -57,7 +57,6 @@ if radio_mode == "DAB" and "F_kHz" in radio_df.columns:
     freq_map = dict(zip(freq_options, freq_counts.index))  # Mapping zurück zur Zahl
 
     if len(freq_options) > 1:
-        st.markdown("💡 *Mehrere Sender erkannt – wähle einen zur gezielten Analyse:*")
         selected_label = st.selectbox("🎚️ Zeige nur Sender mit Frequenz (kHz):", freq_options)
         selected_freq = freq_map[selected_label]
         radio_df = radio_df[radio_df["F_kHz"] == selected_freq]
@@ -120,43 +119,34 @@ if not fahrt2_df.empty:
 # === Diagramm ===
 st.subheader("📊 Vergleichsdiagramm der Fahrten")
 
-# Metrik & Referenzbereiche je nach Radiomodus
-if radio_mode == "DAB":
-    selected_metric = "TL"
-    selected_title = "TL (dBm)"
-    reference_ranges = [
-        {"label": "Sehr gut", "min": -40, "max": 40, "color": "#c8facc"},
-        {"label": "Gut", "min": -60, "max": -40, "color": "#a4e2a0"},
-        {"label": "Mittel", "min": -80, "max": -60, "color": "#ffe59d"},
-        {"label": "Schlecht", "min": -120, "max": -80, "color": "#f7c2c2"},
-    ]
+# Auswahl der Metrik (TL für DAB, FS für FM)
+selected_metric = "TL" if radio_mode == "DAB" else "FS"
+
+# Y-Achsenbeschriftung setzen
+if selected_metric == "TL":
+    y_label = "Tuner Level (dBm)"
+elif selected_metric == "FS":
+    y_label = "Field Strength (dBμV)"
 else:
-    selected_metric = "FS"
-    selected_title = "FS (dBμV)"
-    reference_ranges = [
-        {"label": "Sehr gut", "min": 60, "max": 120, "color": "#c8facc"},
-        {"label": "Gut", "min": 40, "max": 60, "color": "#a4e2a0"},
-        {"label": "Mittel", "min": 20, "max": 40, "color": "#ffe59d"},
-        {"label": "Schlecht", "min": -20, "max": 20, "color": "#f7c2c2"},
-    ]
+    y_label = selected_metric
 
-st.markdown(f"**Angezeigte Metrik:** `{selected_title}`")
-
-# Optionen
-resample = st.selectbox("Zeitintervall (für Mittelwert)", ["Original", "1s", "5s", "10s"], index=2)
+# Weitere Anzeigeoptionen
+resample = st.selectbox(
+    "Zeitintervall (für Mittelwert)", 
+    ["Original", "1s", "5s", "10s"], 
+    index=2  # Standard: 5s
+)
 show_points = st.checkbox("Punkte anzeigen", value=True)
+connect_points = st.checkbox("Punkte verbinden (Linie anzeigen)", value=True)
 show_avg = st.checkbox("Durchschnitt anzeigen")
 show_trend = st.checkbox("Tendenzlinien anzeigen")
-show_reference = st.checkbox("Referenzbereiche anzeigen")
+show_reference = st.checkbox("Referenzbereich anzeigen")
 
 # Daten vorbereiten
 chart_data = []
-
-data_sources = [(fahrt1_df, src1)]
-if not fahrt2_df.empty:
-    data_sources.append((fahrt2_df, src2))
-
-for df, src in data_sources:
+for df, src in zip([fahrt1_df, fahrt2_df], [src1, src2] if not fahrt2_df.empty else [src1]):
+    if df.empty:
+        continue
     sub = df.set_index("timeStamp")[[selected_metric, "time_rel"]]
     if resample != "Original":
         sub = sub.resample(resample).mean().dropna()
@@ -164,87 +154,89 @@ for df, src in data_sources:
     sub.reset_index(inplace=True)
     chart_data.append(sub)
 
-combined_df = pd.concat(chart_data)
-
-# === Achsen vorbereiten
-x_axis = alt.X("time_rel:Q", title="Zeit seit Referenzpunkt [s]")
-
-if selected_metric == "TL":
-    min_val = combined_df[selected_metric].min()
-    max_val = combined_df[selected_metric].max()
-    y_min = min(-100, min_val)
-    y_max = max(0, max_val)
-    y_axis = alt.Y(selected_metric, title=selected_title, scale=alt.Scale(domain=(y_min, y_max)))
+if not chart_data:
+    st.warning("Keine Daten für Diagramm vorhanden.")
 else:
-    y_axis = alt.Y(selected_metric, title=selected_title)
+    combined_df = pd.concat(chart_data)
+    x_axis = alt.X("time_rel:Q", title="Zeit seit Referenzpunkt [s]")
+    color_scale = alt.Color("source:N", title="Fahrt")
 
-# === Diagrammlayer aufbauen
-layers = []
+    layers = []
 
-# Referenzbereiche als Hintergrund
-if show_reference:
-    padding = 10  # Sekunden Puffer
-    x_min = combined_df["time_rel"].min() - padding
-    x_max = combined_df["time_rel"].max() + padding
+    # Referenzbereich als farbige Rechtecke
+    if show_reference:
+        if radio_mode == "DAB":
+            ref_areas = [
+                {"name": "Sehr gut", "start": -40, "end": 40, "color": "#b0f2b4"},
+                {"name": "Gut", "start": -60, "end": -40, "color": "#d9f2b0"},
+                {"name": "Mittel", "start": -80, "end": -60, "color": "#fff7b0"},
+                {"name": "Schlecht", "start": -100, "end": -80, "color": "#f2b0b0"}
+            ]
+        else:
+            ref_areas = [
+                {"name": "Sehr gut", "start": 60, "end": 100, "color": "#b0f2b4"},
+                {"name": "Gut", "start": 40, "end": 60, "color": "#d9f2b0"},
+                {"name": "Mittel", "start": 20, "end": 40, "color": "#fff7b0"},
+                {"name": "Schlecht", "start": -20, "end": 20, "color": "#f2b0b0"}
+            ]
 
-    for ref in reference_ranges:
-        rect = alt.Chart(pd.DataFrame({
-            "y_min": [ref["min"]],
-            "y_max": [ref["max"]],
-            "x_min": [x_min],
-            "x_max": [x_max]
-        })).mark_rect(opacity=0.2, color=ref["color"]).encode(
-            x="x_min:Q",
-            x2="x_max:Q",
-            y="y_min:Q",
-            y2="y_max:Q"
-        )
-        layers.append(rect)
-
-# Punktdarstellung
-if show_points:
-    base = alt.Chart(combined_df).mark_circle(size=30).encode(
-        x=x_axis,
-        y=y_axis,
-        color=alt.Color("source:N", title="Fahrt"),
-        tooltip=[
-            alt.Tooltip("timeStamp:T", title="Zeit", format="%H:%M:%S.%L"),
-            alt.Tooltip(f"{selected_metric}:Q", title=selected_title),
-            alt.Tooltip("source:N", title="Fahrt")
-        ]
-    )
-    layers.append(base)
-
-# Durchschnittslinien
-if show_avg:
-    for src in combined_df["source"].unique():
-        mean_val = combined_df[combined_df["source"] == src][selected_metric].mean()
-        rule = alt.Chart(pd.DataFrame({"y": [mean_val]})).mark_rule(
-            strokeDash=[4, 2], color="gray"
-        ).encode(y="y")
-        layers.append(rule)
-
-# Tendenzlinien (Loess)
-if show_trend:
-    for src in combined_df["source"].unique():
-        trend_data = combined_df[combined_df["source"] == src]
-        if len(trend_data) >= 3:
-            trend = alt.Chart(trend_data).transform_loess(
-                "time_rel", selected_metric, bandwidth=0.3, groupby=["source"]
-            ).mark_line().encode(
+        for area in ref_areas:
+            ref = alt.Chart(pd.DataFrame({"y_start": [area["start"]], "y_end": [area["end"]]})).mark_rect(
+                opacity=0.2, color=area["color"]
+            ).encode(
                 x=x_axis,
-                y=y_axis,
-                color=alt.Color("source:N", legend=None),
-                tooltip=[
-                    alt.Tooltip("source:N", title="Fahrt"),
-                    alt.Tooltip("time_rel:Q", title="Zeit [s]"),
-                    alt.Tooltip(f"{selected_metric}:Q", title=selected_title)
-                ]
+                y=alt.Y("y_start:Q"),
+                y2="y_end:Q"
+            )
+            layers.append(ref)
+
+    # Punkte
+    if show_points:
+        points = alt.Chart(combined_df).mark_circle(size=30).encode(
+            x=x_axis,
+            y=alt.Y(selected_metric, title=y_label),
+            color=color_scale,
+            tooltip=[
+                alt.Tooltip("timeStamp:T", title="Zeit", format="%H:%M:%S.%L"),
+                alt.Tooltip(f"{selected_metric}:Q", title=y_label),
+                alt.Tooltip("source:N", title="Fahrt")
+            ]
+        )
+        layers.append(points)
+
+    # Linienverbindung
+    if connect_points:
+        lines = alt.Chart(combined_df).mark_line().encode(
+            x=x_axis,
+            y=alt.Y(selected_metric, title=y_label),
+            color=color_scale
+        )
+        layers.append(lines)
+
+    # Durchschnittslinie
+    if show_avg:
+        for src in combined_df["source"].unique():
+            mean_val = combined_df[combined_df["source"] == src][selected_metric].mean()
+            rule = alt.Chart(pd.DataFrame({"y": [mean_val]})).mark_rule(
+                strokeDash=[4, 2], color="gray"
+            ).encode(y="y")
+            layers.append(rule)
+
+    # Tendenzlinie
+    if show_trend:
+        for src in combined_df["source"].unique():
+            trend_data = combined_df[combined_df["source"] == src]
+            trend = alt.Chart(trend_data).transform_loess(
+                "time_rel", selected_metric, bandwidth=0.3
+            ).mark_line(strokeDash=[2, 1]).encode(
+                x=x_axis,
+                y=alt.Y(selected_metric, title=y_label),
+                color=alt.Color("source:N", legend=None)
             )
             layers.append(trend)
 
-# Diagramm anzeigen
-st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
+    st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
+
 
 
 # ==================== GNSS Map ====================
