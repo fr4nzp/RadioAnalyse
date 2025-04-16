@@ -163,7 +163,7 @@ else:
 
     layers = []
 
-    # Referenzbereich als farbige Rechtecke
+        # Referenzbereich als farbige Rechtecke
     if show_reference:
         if radio_mode == "DAB":
             ref_areas = [
@@ -180,15 +180,25 @@ else:
                 {"name": "Schlecht", "start": -20, "end": 20, "color": "#f2b0b0"}
             ]
 
+        min_x = combined_df["time_rel"].min()
+        max_x = combined_df["time_rel"].max()
+
         for area in ref_areas:
-            ref = alt.Chart(pd.DataFrame({"y_start": [area["start"]], "y_end": [area["end"]]})).mark_rect(
-                opacity=0.2, color=area["color"]
-            ).encode(
-                x=x_axis,
-                y=alt.Y("y_start:Q"),
+            bg_df = pd.DataFrame({
+                "x_start": [min_x],
+                "x_end": [max_x],
+                "y_start": [area["start"]],
+                "y_end": [area["end"]]
+            })
+
+            ref = alt.Chart(bg_df).mark_rect(opacity=0.25, color=area["color"]).encode(
+                x=alt.X("x_start:Q", title=""),
+                x2="x_end:Q",
+                y=alt.Y("y_start:Q", title=""),
                 y2="y_end:Q"
             )
             layers.append(ref)
+
 
     # Punkte
     if show_points:
