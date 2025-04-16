@@ -14,30 +14,34 @@ st.title("📡 Radio Trace Analyzer")
 # === Datei auswählen ===
 use_uploaded = st.checkbox("Eigene Datei hochladen")
 
+raw_data = []
+selected_sources = []
+
 if use_uploaded:
-    uploaded_file = st.file_uploader("Wähle eine JSON-Datei", type="json")
-    if uploaded_file is None:
+    uploaded_files = st.file_uploader("Wähle JSON-Datei(en)", type="json", accept_multiple_files=True)
+    if not uploaded_files:
         st.stop()
-    raw_data = json.load(uploaded_file)
-    selected_sources = ["Upload"]
-    for entry in raw_data:
-        entry["source"] = "Upload"
+    for file in uploaded_files:
+        part = json.load(file)
+        for entry in part:
+            entry["source"] = file.name
+        raw_data.extend(part)
+        selected_sources.append(file.name)
 else:
+    # Default: Daten aus /data
     available_files = [f for f in os.listdir("data") if f.endswith(".json")]
     selected_files = st.multiselect("Wähle Datendatei(en) aus", available_files, default=available_files[:2])
     if not selected_files:
         st.stop()
-    raw_data = []
-    selected_sources = []
     for file in selected_files:
         path = os.path.join("data", file)
         with open(path, "r", encoding="utf-8") as f:
             part = json.load(f)
-            source_name = os.path.splitext(file)[0]
             for entry in part:
-                entry["source"] = source_name
+                entry["source"] = file
             raw_data.extend(part)
-        selected_sources.append(source_name)
+        selected_sources.append(file)
+
 
 # === Daten vorbereiten ===
 def filter_entries(data, typ):
