@@ -1,9 +1,8 @@
 *.csv
-*.txt
 __pycache__/
 .env
 snippets.py
-.txt
 assets
 traces
 data
+snippets
