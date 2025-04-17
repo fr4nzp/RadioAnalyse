@@ -6,6 +6,11 @@ import pydeck as pdk
 from datetime import datetime
 from geopy.distance import geodesic
 
+if "auth" not in st.session_state:
+    st.warning("Bitte zuerst einloggen.")
+    st.page_link("Home", label="⬅️ Zurück zur Startseite")
+    st.stop()
+
 st.set_page_config(page_title="Analyse", layout="wide")
 st.title("🔍 Analysebereich")
 

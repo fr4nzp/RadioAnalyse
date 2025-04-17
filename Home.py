@@ -1,4 +1,35 @@
 import streamlit as st
+import hashlib
+import json
+
+# Login-Funktion mit Hash-Vergleich
+def login():
+    st.title("🔐 Login")
+
+    username = st.text_input("Benutzername")
+    password = st.text_input("Passwort", type="password")
+
+    if st.button("Einloggen"):
+        try:
+            with open("users.json", "r") as f:
+                users = json.load(f)
+        except FileNotFoundError:
+            st.error("Benutzerdatei nicht gefunden.")
+            return
+
+        hashed_pw = hashlib.md5(password.encode()).hexdigest()
+
+        if username in users and users[username] == hashed_pw:
+            st.session_state["auth"] = True
+            st.session_state["user"] = username
+            st.success(f"Willkommen, {username}!")
+            st.rerun()   
+        else:
+            st.error("❌ Zugangsdaten falsch.")
+
+if "auth" not in st.session_state:
+    login()
+    st.stop()
 
 st.set_page_config(page_title="Radio Trace Analyzer", layout="centered")
 
