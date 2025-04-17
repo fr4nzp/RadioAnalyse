@@ -158,13 +158,14 @@ with tab1:
     selected_metric = "TL" if radio_mode == "DAB" else "FS"
     y_label = "Tuner Level (dBm)" if selected_metric == "TL" else "Field Strength (dBμV)"
 
-    # ⚙️ Anzeigeoptionen
-    resample = st.selectbox("🕒 Zeitintervall", ["Original", "1s", "5s", "10s"], index=2)
-    show_points = st.checkbox("Punkte anzeigen", value=True)
-    connect_points = st.checkbox("Punkte verbinden", value=True)
-    show_avg = st.checkbox("Durchschnitt anzeigen")
-    show_trend = st.checkbox("Tendenzlinien anzeigen")
-    show_reference = st.checkbox("Referenzbereich anzeigen")
+        # ⚙️ Anzeigeoptionen im ausklappbaren Menü
+    with st.expander("⚙️ Anzeigeoptionen"):
+        resample = st.selectbox("🕒 Zeitintervall (für Mittelwert)", ["Original", "1s", "5s", "10s"], index=2)
+        show_points = st.checkbox("🔵 Punkte anzeigen", value=True)
+        connect_points = st.checkbox("📈 Punkte verbinden (Linie)", value=True)
+        show_avg = st.checkbox("➕ Durchschnitt anzeigen")
+        show_trend = st.checkbox("📉 Tendenzlinien anzeigen")
+        show_reference = st.checkbox("🎯 Referenzbereich anzeigen")
 
     # 📊 Daten vorbereiten für die Visualisierung
     chart_data = []
