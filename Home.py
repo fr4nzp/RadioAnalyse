@@ -65,16 +65,22 @@ else:
 st.markdown("## 🧰 Lokaler Extractor für große Dateien")
 
 st.markdown("""
-Dieses Tool ist für die **lokale Verarbeitung von JSON-Dateien** gedacht.  
-Mit der `.exe` kannst du deine Rohdaten extrahieren, bevor du sie in dieser App analysierst.
+Dieses Tool ist für die **lokale Verarbeitung sehr großer JSON-Dateien** gedacht.
 
-**Anleitung:**
+### 🧑‍💻 Anleitung:
+
 1. Lade das ZIP herunter  
 2. Entpacke es  
-3. Starte die `extractor.exe`  
-4. Wähle deine Quelldatei und den Zielpfad für die aufbereitete Datei  
-5. Lade die erstellte JSON hier hoch zur Analyse
+3. Doppelklicke auf `start.bat`  
+4. Wähle deine Quelldatei und den Zielpfad  
+5. Die extrahierte JSON-Datei kannst du anschließend hier hochladen
+
+👉 Voraussetzung: **Python 3** muss installiert sein
 """)
 
-with open("extractor.zip", "rb") as f:
-    st.download_button("📥 Extractor herunterladen (.zip)", f, file_name="RadioTraceExtractor.zip")
+with open("extractor-python.zip", "rb") as f:
+    st.download_button(
+        "📥 Lokalen Extractor herunterladen (.zip)",
+        f,
+        file_name="RadioTraceExtractor_Python.zip"
+    )

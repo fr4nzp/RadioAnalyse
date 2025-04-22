@@ -6,3 +6,15 @@ assets
 traces
 data
 snippets
+
+# Mac-spezifisch
+.DS_Store
+__MACOSX/
+# Falls mal aus Versehen erstellt:
+*.pyc
+__pycache__/
+# Wenn du später EXE-Builds nochmal machst:
+*.exe
+*.spec
+build/
+dist/
