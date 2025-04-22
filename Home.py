@@ -71,8 +71,8 @@ Dieses Tool ist für die **lokale Verarbeitung sehr großer JSON-Dateien** gedac
 
 1. Lade das ZIP herunter  
 2. Entpacke es  
-3. Doppelklicke auf `start.bat`  
-4. Wähle deine Quelldatei und den Zielpfad  
+3. Doppelklicke auf `extract_gui.py`  
+4. Wähle deine Quelldatei und den Zielort aus  
 5. Die extrahierte JSON-Datei kannst du anschließend hier hochladen
 
 👉 Voraussetzung: **Python 3** muss installiert sein
