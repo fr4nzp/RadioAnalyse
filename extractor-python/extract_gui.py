@@ -1,15 +1,15 @@
 # extractor-python/extract_gui.py
 import tkinter as tk
+from tkinter import filedialog, messagebox, ttk
 import os
-from tkinter import filedialog, messagebox
+import threading
 from extract import process_file
 
 def select_file():
     path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json")])
     if path:
         input_path.set(path)
-        # Leere das Output-Feld, falls schon vorher etwas drinstand
-        output_path.set("")
+        output_path.set("")  # Reset output when input changes
 
 def select_output():
     folder = filedialog.askdirectory()
@@ -20,17 +20,30 @@ def select_output():
     elif not input_path.get():
         messagebox.showwarning("Hinweis", "Bitte zuerst eine Quelldatei auswählen.")
 
-def run():
+def run_conversion():
     try:
+        # Start progressbar
+        progressbar.start()
+        convert_button.config(state="disabled")
+
         process_file(input_path.get(), output_path.get())
+
         messagebox.showinfo("Fertig", f"Datei wurde erfolgreich gespeichert als:\n{output_path.get()}")
     except Exception as e:
         messagebox.showerror("Fehler", f"Fehler beim Verarbeiten:\n{e}")
+    finally:
+        # Stop progressbar
+        progressbar.stop()
+        convert_button.config(state="normal")
+
+def run_thread():
+    thread = threading.Thread(target=run_conversion)
+    thread.start()
 
 # GUI-Fenster aufbauen
 root = tk.Tk()
 root.title("Radio Trace Extractor")
-root.geometry("500x300")
+root.geometry("500x340")
 
 # Speicher für Pfade
 input_path = tk.StringVar()
@@ -45,6 +58,12 @@ tk.Label(root, text="Zielordner:").pack(pady=5)
 tk.Button(root, text="Zielordner wählen...", command=select_output).pack()
 tk.Label(root, textvariable=output_path, wraplength=480, fg="gray").pack(pady=(5, 10))
 
-tk.Button(root, text="Verarbeiten", command=run, bg="green", fg="white", padx=10, pady=5).pack(pady=10)
+# Fortschrittsbalken
+progressbar = ttk.Progressbar(root, mode="indeterminate", length=400)
+progressbar.pack(pady=5)
+
+# Verarbeiten-Button
+convert_button = tk.Button(root, text="Verarbeiten", command=run_thread, bg="green", fg="white", padx=10, pady=5)
+convert_button.pack(pady=10)
 
 root.mainloop()
