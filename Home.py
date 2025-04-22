@@ -60,3 +60,21 @@ if st.session_state.uploaded_files:
         st.switch_page("pages/Analyse.py")
 else:
     st.info("Noch keine Dateien hochgeladen.")
+
+
+st.markdown("## 🧰 Lokaler Extractor für große Dateien")
+
+st.markdown("""
+Dieses Tool ist für die **lokale Verarbeitung von JSON-Dateien** gedacht.  
+Mit der `.exe` kannst du deine Rohdaten extrahieren, bevor du sie in dieser App analysierst.
+
+**Anleitung:**
+1. Lade das ZIP herunter  
+2. Entpacke es  
+3. Starte die `extractor.exe`  
+4. Wähle deine Quelldatei und den Zielpfad für die aufbereitete Datei  
+5. Lade die erstellte JSON hier hoch zur Analyse
+""")
+
+with open("extractor.zip", "rb") as f:
+    st.download_button("📥 Extractor herunterladen (.zip)", f, file_name="RadioTraceExtractor.zip")
