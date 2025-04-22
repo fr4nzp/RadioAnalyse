@@ -1,4 +1,3 @@
-# extractor-python/extract_gui.py
 import tkinter as tk
 from tkinter import filedialog, messagebox, ttk
 import os
@@ -9,7 +8,7 @@ def select_file():
     path = filedialog.askopenfilename(filetypes=[("JSON files", "*.json")])
     if path:
         input_path.set(path)
-        output_path.set("")  # Zielpfad zurücksetzen
+        output_path.set("")
 
 def select_output():
     folder = filedialog.askdirectory()
@@ -55,7 +54,6 @@ input_path = tk.StringVar()
 output_path = tk.StringVar()
 progress_var = tk.IntVar(value=0)
 
-# Layout
 tk.Label(root, text="Quelldatei (JSON):").pack(pady=5)
 tk.Entry(root, textvariable=input_path, width=60).pack()
 tk.Button(root, text="Durchsuchen...", command=select_file).pack()
@@ -64,13 +62,11 @@ tk.Label(root, text="Zielordner:").pack(pady=5)
 tk.Button(root, text="Zielordner wählen...", command=select_output).pack()
 tk.Label(root, textvariable=output_path, wraplength=480, fg="gray").pack(pady=(5, 10))
 
-# Fortschrittsanzeige
 progressbar = ttk.Progressbar(root, variable=progress_var, maximum=100, length=400)
 progressbar.pack(pady=(5, 0))
 percent_label = tk.Label(root, text="0 %", fg="gray")
 percent_label.pack()
 
-# Start-Button
 convert_button = tk.Button(root, text="Verarbeiten", command=run_thread, bg="green", fg="white", padx=10, pady=5)
 convert_button.pack(pady=15)
 

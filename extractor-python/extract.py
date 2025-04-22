@@ -1,4 +1,3 @@
-# extractor-python/extract.py
 import json
 import re
 
@@ -6,8 +5,8 @@ def extract_dab(data):
     dab_entries = []
     for entry in data:
         msg = entry.get("msgData", "")
-        if "MER_NXP_MOD# Qual" in msg:
-            match = re.search(r"F=(\d+)kHz.*?TL=(-?\d+).*?SNR=(\d+)", msg)
+        if "MER_NXP_MOD# QUAL" in msg and "isAudio=1" in msg:
+            match = re.search(r"F=(\d+)\s+EQ=.*?TL=(-?\d+)\s+SNR=(\d+)", msg)
             if match:
                 f, tl, snr = match.groups()
                 dab_entries.append({
@@ -66,9 +65,8 @@ def process_file(input_path, output_path, progress_callback=None):
     for i, entry in enumerate(data):
         msg = entry.get("msgData", "")
 
-        # DAB
-        if "MER_NXP_MOD# Qual" in msg:
-            match = re.search(r"F=(\d+)kHz.*?TL=(-?\d+).*?SNR=(\d+)", msg)
+        if "MER_NXP_MOD# QUAL" in msg and "isAudio=1" in msg:
+            match = re.search(r"F=(\d+)\s+EQ=.*?TL=(-?\d+)\s+SNR=(\d+)", msg)
             if match:
                 f, tl, snr = match.groups()
                 combined.append({
@@ -79,7 +77,6 @@ def process_file(input_path, output_path, progress_callback=None):
                     "SNR": int(snr)
                 })
 
-        # FM
         elif "T[1/0x231]" in msg:
             match = re.search(r"fq (\d+), fs (\d+), .*?snr (\d+)", msg)
             if match:
@@ -92,7 +89,6 @@ def process_file(input_path, output_path, progress_callback=None):
                     "SNR": int(snr)
                 })
 
-        # GNSS
         elif "TRK-GNSS" in msg:
             match = re.search(r"ts=([\d\.]+), pos=\(([-\d\.]+), ([-\d\.]+),.*?\), hdg=([\-\w\.]+), fix=(\d+), antenna=(\d+)", msg)
             if match:
@@ -108,7 +104,6 @@ def process_file(input_path, output_path, progress_callback=None):
                     "antenna": int(antenna)
                 })
 
-        # Progress melden
         if progress_callback and i % 100 == 0:
             percent = int((i / total) * 100)
             progress_callback(percent)
@@ -116,6 +111,5 @@ def process_file(input_path, output_path, progress_callback=None):
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump(combined, f, indent=2, ensure_ascii=False)
 
-    # 100 % sicherstellen am Ende
     if progress_callback:
         progress_callback(100)
