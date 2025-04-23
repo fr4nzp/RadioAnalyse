@@ -61,26 +61,3 @@ if st.session_state.uploaded_files:
 else:
     st.info("Noch keine Dateien hochgeladen.")
 
-
-st.markdown("## 🧰 Lokaler Extractor für große Dateien")
-
-st.markdown("""
-Dieses Tool ist für die **lokale Verarbeitung sehr großer JSON-Dateien** gedacht.
-
-### 🧑‍💻 Anleitung:
-
-1. Lade das ZIP herunter  
-2. Entpacke es  
-3. Doppelklicke auf `extract_gui.py`  
-4. Wähle deine Quelldatei und den Zielort aus  
-5. Die extrahierte JSON-Datei kannst du anschließend hier hochladen
-
-👉 Voraussetzung: **Python 3** muss installiert sein
-""")
-
-with open("extractor-python.zip", "rb") as f:
-    st.download_button(
-        "📥 Lokalen Extractor herunterladen (.zip)",
-        f,
-        file_name="RadioTraceExtractor_Python.zip"
-    )
