@@ -14,6 +14,13 @@ if "auth" not in st.session_state:
 st.set_page_config(page_title="Analyse", layout="wide")
 st.title("🔍 Analysebereich")
 
+# Falls zu löschende Datei gespeichert wurde
+if "file_to_remove" in st.session_state:
+    filename = st.session_state.pop("file_to_remove")
+    st.session_state.uploaded_files = [f for f in st.session_state.uploaded_files if f.name != filename]
+    st.success(f"✅ Datei `{filename}` wurde entfernt.")
+
+
 # Sicherstellen, dass Daten vorhanden sind
 if "uploaded_files" not in st.session_state or not st.session_state.uploaded_files:
     st.warning("⚠️ Du musst zuerst Dateien auf der Startseite hochladen.")
@@ -27,16 +34,20 @@ st.sidebar.header("📁 Aktive Fahrten")
 for i, file in enumerate(st.session_state.uploaded_files):
     col1, col2 = st.sidebar.columns([4, 1])
     col1.write(f"📄 {file.name}")
+
+    # Statt direkt poppen → nur markieren
     if col2.button("❌", key=f"remove_{i}"):
-        st.session_state.uploaded_files.pop(i)
-        st.experimental_rerun()
+        st.session_state["file_to_remove"] = file.name
+        st.rerun()
+
 
 extra = st.sidebar.file_uploader("Weitere Dateien hinzufügen", type="json", accept_multiple_files=True, key="extra_upload")
 if extra:
     for file in extra:
         if file.name not in [f.name for f in st.session_state.uploaded_files]:
             st.session_state.uploaded_files.append(file)
-    st.experimental_rerun()
+    st.rerun()
+
 
 if not st.session_state.uploaded_files:
     st.warning("⚠️ Keine Dateien mehr vorhanden.")
