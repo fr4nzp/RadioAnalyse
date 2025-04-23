@@ -149,7 +149,7 @@ with tab1:
 
     with st.expander("⚙️ Anzeigeoptionen"):
         resample = st.selectbox("🕒 Zeitintervall", ["Original", "1s", "5s", "10s"], index=2)
-        show_points = st.checkbox("🔵 Punkte anzeigen", value=True)
+        show_points = st.checkbox("🔵 Punkte anzeigen", value=False)
         connect_points = st.checkbox("📈 Linie", value=True)
         show_avg = st.checkbox("➕ Durchschnitt", value=False)
         show_trend = st.checkbox("📉 Tendenzlinie", value=False)
@@ -243,7 +243,9 @@ with tab1:
                 )
                 layers.append(trend)
 
-        st.altair_chart(alt.layer(*layers).interactive(), use_container_width=True)
+        chart = alt.layer(*layers).properties(height=500).interactive()
+        st.altair_chart(chart, use_container_width=True)
+
 
 # ---------------------------------------------
 # 🗺️ Karte
